@@ -1,0 +1,12 @@
+import {randomUUID} from 'node:crypto';import {createDurableCoordinator} from '../service/durable-coordinator.mjs';import {sha,MAX_PDF} from '../service/durable-envelope.mjs';
+/** INTERNAL ONLY. Call after either existing SMTP helper resolves.
+ * employee must be the ORIGINAL server-selected RH row, never recipient mailbox or request JSON.
+ * readOriginalPdf and resolveOriginalEmployee are injected server functions, not public endpoints.
+ * Return value is archive-only; never replace existing results.success/errors with it. */
+export function createDistributionArchiveHook({enabled=false,readOriginalPdf,resolveOriginalEmployee,envelope,outbox,blobStore,report=()=>{},timeoutMs=5000}){
+ const safeReport=e=>{try{Promise.resolve(report(e)).catch(()=>{})}catch{}};
+ return Object.freeze({async afterSuccessfulSend(input){if(!enabled)return {archive:'disabled'};const eventId=randomUUID();let timer;const controller=new AbortController();
+  try{return await Promise.race([Promise.resolve().then(async()=>{const selected=input?.employee,at=input?.acceptedAt;if(!selected||!/^([1-9][0-9]{0,18})$/.test(String(selected.id))||typeof selected.matricule!=='string'||!selected.matricule||typeof at!=='string'||!Number.isFinite(Date.parse(at)))throw Error('binding');const verified=await resolveOriginalEmployee({employeeId:String(selected.id),matricule:selected.matricule},{signal:controller.signal});if(!Array.isArray(verified)||verified.length!==1||String(verified[0].id)!==String(selected.id)||String(verified[0].matricule)!==selected.matricule)throw Error('ambiguous_binding');const bytes=await readOriginalPdf(input.finalPath,{signal:controller.signal,maxBytes:MAX_PDF});controller.signal.throwIfAborted();if(!Buffer.isBuffer(bytes)||bytes.length>MAX_PDF)throw Error('pdf_limit');const d=new Date(at),trusted={transportAccepted:true,employeeId:String(selected.id),period:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,distributedAt:d.toISOString(),sha256:sha(bytes)};const coordinator=createDurableCoordinator({enabled:true,envelope,outbox,blobStore,report,timeoutMs,leaseMs:Math.max(30000,timeoutMs*3),resolveAcceptedEvent:async id=>id===eventId?trusted:null});return coordinator.afterAcceptedEmail({eventId,pdf:bytes});}),new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error('timeout'))},timeoutMs)})]);}
+  catch{const r={archive:'unconfirmed',eventId,code:'archive_enqueue_unconfirmed'};safeReport(r);return r;}finally{clearTimeout(timer);}
+ }});
+}

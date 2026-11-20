@@ -1,0 +1,226 @@
+.solde-conge-container {
+  display: flex;
+  min-height: 100vh;
+  background: rgba(248, 249, 250, 0.98);
+  font-family: 'Segoe UI', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #2c3e50;
+}
+
+.solde-conge-content {
+  flex: 1;
+  margin-left: 280px;
+  padding: 35px;
+  transition: all 0.3s ease;
+}
+
+.solde-conge-header {
+  background: #ffffff;
+  padding: 32px 40px;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  margin-bottom: 30px;
+  border: 1px solid rgba(229, 231, 235, 0.5);
+  position: relative;
+  overflow: hidden;
+}
+
+.solde-conge-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #046eaf 0%, #ef7807 50%, #0e4e78 100%);
+  display: none;
+}
+
+.solde-conge-header h1 {
+  margin: 0 0 6px;
+  font-size: 1.6rem;
+  color: #2c3e50;
+}
+
+.solde-conge-header p {
+  margin: 0;
+  color: #5d6d7e;
+  font-size: 0.95rem;
+}
+
+.solde-conge-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: #ffffff;
+  border: 1px solid #e1e8ed;
+  border-radius: 10px;
+  padding: 16px 24px;
+  margin-bottom: 24px;
+}
+
+.solde-conge-toolbar .search-bar {
+  position: relative;
+  flex: 1;
+  min-width: 240px;
+}
+
+.solde-conge-toolbar .search-input {
+  width: 100%;
+  padding: 10px 40px 10px 14px;
+  border: 1px solid #e1e8ed;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.solde-conge-toolbar .search-icon {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.6;
+}
+
+.solde-conge-toolbar .toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.solde-conge-toolbar .employees-count {
+  font-size: 0.9rem;
+  color: #5d6d7e;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.solde-conge-toolbar .refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: 1px solid #e1e8ed;
+  border-radius: 10px;
+  background: #f8f9fa;
+  color: #2c3e50;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.solde-conge-toolbar .refresh-btn:hover {
+  background: #eef2f5;
+}
+
+.solde-conge-table-wrapper {
+  background: #ffffff;
+  border: 1px solid #e1e8ed;
+  border-radius: 10px;
+  overflow-x: auto;
+}
+
+.solde-conge-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+.solde-conge-table thead th {
+  text-align: left;
+  padding: 14px 20px;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #5d6d7e;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e1e8ed;
+  white-space: nowrap;
+}
+
+.solde-conge-table tbody td {
+  padding: 14px 20px;
+  border-bottom: 1px solid #eef1f4;
+  font-size: 0.9rem;
+  vertical-align: middle;
+}
+
+.solde-conge-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.solde-conge-table tbody tr:hover {
+  background: #fafbfc;
+}
+
+.cell-matricule {
+  font-family: monospace;
+  color: #5d6d7e;
+}
+
+.cell-employee {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.cell-balance {
+  min-width: 180px;
+}
+
+.balance-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.balance-value {
+  font-weight: 700;
+  color: #046eaf;
+}
+
+.balance-value.balance-negative {
+  color: #ef4444;
+}
+
+.balance-bar-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 4px;
+  background: #eef1f4;
+  overflow: hidden;
+}
+
+.balance-bar-fill {
+  height: 100%;
+  background: #046eaf;
+  border-radius: 4px;
+}
+
+.balance-bar-fill.balance-bar-negative {
+  background: #ef4444;
+}
+
+.balance-na {
+  color: #a0aec0;
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+.no-results {
+  padding: 60px 20px;
+  text-align: center;
+  color: #5d6d7e;
+}
+
+.no-results-icon {
+  font-size: 2.5rem;
+  margin-bottom: 10px;
+}
+
+@media (max-width: 1024px) {
+  .solde-conge-content {
+    margin-left: 0;
+    padding: 20px;
+  }
+}

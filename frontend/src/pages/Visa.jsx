@@ -1,0 +1,1834 @@
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import Sidebar from "../components/Sidebar";
+import "./Visa.css";
+import toast, { Toaster } from "react-hot-toast";
+import { useLanguage } from "../contexts/LanguageContext";
+import { getBackendBaseUrl } from "../utils/backendUrl";
+import { formatEmployeeNom, formatEmployeePrenom } from "../utils/employeeAvatar";
+import { translateStsJobTitle } from "../utils/employeeProfile";
+
+import { ClipboardList as LuClipboardList, Folder as LuFolder, Lock as LuLock, Search as LuSearch } from 'lucide-react';
+const API = getBackendBaseUrl();
+
+// /api/visa-dossiers is gated to Tunisia/SAHEL tenant users only, so every
+// employee here is SAHEL even though the row carries no tenant_schema field.
+const STS_MARKER = { tenant_schema: "public" };
+
+/** -------------------------------------------------------
+ * Helpers
+ * ------------------------------------------------------ */
+function isDocumentSatisfied(doc) {
+  if (doc.mode === "UPLOAD") {
+    return doc.status === "UPLOADED" || doc.status === "RECEIVED_PHYSICAL";
+  }
+  if (doc.mode === "PHYSICAL") return doc.status === "RECEIVED_PHYSICAL";
+  return false;
+}
+
+function getDocumentType(docCode, t) {
+  switch (docCode) {
+    case "PASSEPORT_ORIGINAL":
+    case "PHOTOS":
+    case "COPIE_PAGE_1_PASSEPORT":
+      return t("visaDocTypeBring");
+
+    case "CNSS":
+    case "FICHES_PAIE":
+      return "Supporting Docs";
+
+    case "ASSURANCE":
+    case "BILLET_AVION":
+      return t("visaDocTypeSpecificEmail");
+
+    case "RESERVATION_HOTEL":
+      return t("visaDocTypeBooking");
+
+    case "FRAIS_VISA":
+      return t("visaDocTypeFranceVisas");
+
+    case "ATTESTATION_TRAVAIL":
+    case "ORDRE_MISSION":
+    case "INVITATION":
+      return t("visaDocTypePdfGeneration");
+
+    default:
+      return "Upload PDF"; // Classe CSS stable
+  }
+}
+
+function getDocumentTypeDisplayLabel(docCode, t) {
+  switch (docCode) {
+    case "PASSEPORT_ORIGINAL":
+    case "PHOTOS":
+    case "COPIE_PAGE_1_PASSEPORT":
+      return t("visaDocTypeBring");
+
+    case "CNSS":
+    case "FICHES_PAIE":
+      return t("visaDocTypeSupportingDocs");
+
+    case "ASSURANCE":
+    case "BILLET_AVION":
+      return t("visaDocTypeSpecificEmail");
+
+    case "RESERVATION_HOTEL":
+      return t("visaDocTypeBooking");
+
+    case "FRAIS_VISA":
+      return t("visaDocTypeFranceVisas");
+
+    case "ATTESTATION_TRAVAIL":
+    case "ORDRE_MISSION":
+    case "INVITATION":
+      return t("visaDocTypePdfGeneration");
+
+    default:
+      return t("visaDocTypeUploadPdf"); // Texte affiché modifié
+  }
+}
+
+function typeToCssClass(typeLabel) {
+  return `type-${String(typeLabel).replace(/\s+/g, "-").toLowerCase()}`;
+}
+
+function isValidHttpUrl(u) {
+  try {
+    const url = new URL(u);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isPdfFileRef(fileUrl, originalFilename) {
+  return /\.pdf($|\?)/i.test(String(fileUrl || "")) || /\.pdf$/i.test(String(originalFilename || ""));
+}
+
+function getGeneratedDocumentUrl(doc) {
+  return doc?.generatedFileUrl || (!isPdfFileRef(doc?.fileUrl, doc?.originalFilename) ? doc?.fileUrl || "" : "");
+}
+
+function getDisplayDocumentStatus(doc) {
+  if (!doc) return "";
+
+  if (doc.status === "RECEIVED_PHYSICAL") {
+    return doc.mode === "UPLOAD" ? "RECEIVED" : "RECEIVED_PHYSICAL";
+  }
+
+  if (doc.code === "INVITATION") {
+    if (isPdfFileRef(doc.fileUrl, doc.originalFilename) && doc.status === "UPLOADED") {
+      return "UPLOADED";
+    }
+    return getGeneratedDocumentUrl(doc) ? "GENERATED" : doc.status;
+  }
+
+  if (
+    (doc.code === "ATTESTATION_TRAVAIL" || doc.code === "ORDRE_MISSION") &&
+    doc.status === "UPLOADED" &&
+    getGeneratedDocumentUrl(doc)
+  ) {
+    return "GENERATED";
+  }
+
+  return doc.status;
+}
+
+/** -------------------------------------------------------
+ * i18n maps
+ * ------------------------------------------------------ */
+const getSteps = (t) => [
+  { key: "DOCS", label: t("visaStepsDocsValidated") },
+  { key: "PRET", label: t("visaStepsReadyToSubmit") },
+  { key: "RESULT", label: t("visaStepsResult") },
+];
+
+const getDocumentStatusLabel = (t) => ({
+  MISSING: t("docStatusMissing"),
+  UPLOADED: t("docStatusUploaded"),
+  GENERATED: t("docStatusGenerated"),
+  REJECTED: t("docStatusRejected"),
+  RECEIVED: t("visaReceivedBtn"),
+  RECEIVED_PHYSICAL: t("docStatusReceivedPhysical"),
+});
+
+/** -------------------------------------------------------
+ * UI Components
+ * ------------------------------------------------------ */
+function StatusPill({ status, t }) {
+  let cls = "status-pill";
+  if (status === "EN_COURS") cls += " status-warning";
+  else if (status === "PRET_POUR_DEPOT") cls += " status-info";
+  else if (status === "VISA_ACCORDE") cls += " status-success";
+  else if (status === "VISA_REFUSE") cls += " status-danger";
+  else cls += " status-info";
+
+  const label =
+    status === "EN_COURS"
+      ? t("visaStatusInProgress")
+      : status === "PRET_POUR_DEPOT"
+      ? t("visaStatusReadyToSubmit")
+      : status === "VISA_ACCORDE"
+      ? t("visaStatusGranted")
+      : status === "VISA_REFUSE"
+      ? t("visaStatusRefused")
+      : status;
+
+  return <span className={cls}>{label}</span>;
+}
+
+// ✅ CHANGED: added onClick prop
+function KpiCard({ label, value, type, onClick }) {
+  return (
+    <div
+      className={`kpi-card ${type ? `kpi-${type}` : ""}`}
+      onClick={onClick}
+      style={onClick ? { cursor: "pointer" } : undefined}
+    >
+      <div className="kpi-label">{label}</div>
+      <div className="kpi-value">{value}</div>
+    </div>
+  );
+}
+
+function Stepper({ stepIndex, steps }) {
+  return (
+    <div className="visa-stepper">
+      {steps.map((s, idx) => {
+        const state = idx < stepIndex ? "done" : idx === stepIndex ? "active" : "future";
+        return (
+          <div className={`visa-step ${state}`} key={s.key}>
+            <div className="visa-step-dot">{idx < stepIndex ? "✓" : idx + 1}</div>
+            <div className="visa-step-label">{s.label}</div>
+            {idx < steps.length - 1 && <div className={`visa-step-line ${idx < stepIndex ? "done" : ""}`} />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LockedHint({ text }) {
+  return (
+    <span className="locked-hint" title={text}>
+      <LuLock size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {text}
+    </span>
+  );
+}
+
+/** -------------------------------------------------------
+ * ✅ EmployeeSearchSelect (filtre PRENOM/NOM)
+ * ------------------------------------------------------ */
+function EmployeeSearchSelect({
+  t,
+  label,
+  required = false,
+  employees = [],
+  loading = false,
+  value,
+  onChange,
+  groupLabel,
+}) {
+  const rootRef = useRef(null);
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+
+  useEffect(() => {
+    const emp = employees.find((e) => String(e.id) === String(value));
+    if (!value) setQuery("");
+    else if (emp) setQuery(`${formatEmployeePrenom(emp.prenom)} ${formatEmployeeNom(emp.nom)}`.trim());
+  }, [value, employees]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return employees;
+
+    return employees.filter((emp) => {
+      const prenom = (emp.prenom ?? "").toLowerCase();
+      const nom = (emp.nom ?? "").toLowerCase();
+      const full = `${prenom} ${nom}`.trim();
+      return prenom.includes(q) || nom.includes(q) || full.includes(q);
+    });
+  }, [employees, query]);
+
+  useEffect(() => {
+    function handleDown(e) {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(e.target)) {
+        setOpen(false);
+        setActiveIndex(-1);
+      }
+    }
+    document.addEventListener("mousedown", handleDown);
+    return () => document.removeEventListener("mousedown", handleDown);
+  }, []);
+
+  function selectEmp(emp) {
+    onChange(String(emp.id));
+    setQuery(`${formatEmployeePrenom(emp.prenom)} ${formatEmployeeNom(emp.nom)}`.trim());
+    setOpen(false);
+    setActiveIndex(-1);
+  }
+
+  function onKeyDown(e) {
+    if (!open && (e.key === "ArrowDown" || e.key === "Enter")) {
+      setOpen(true);
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.min(i + 1, filtered.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      if (open && activeIndex >= 0 && filtered[activeIndex]) {
+        e.preventDefault();
+        selectEmp(filtered[activeIndex]);
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      setActiveIndex(-1);
+    }
+  }
+
+  return (
+    <div className="emp-select" ref={rootRef}>
+      <label className="emp-label">
+        {label} {required && <span className="required">*</span>}
+      </label>
+
+      <div className={`emp-inputWrap ${open ? "is-open" : ""}`}>
+        <input
+          className="emp-input"
+          type="text"
+          value={query}
+          placeholder={loading ? t("loading") : ""}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+            setActiveIndex(-1);
+            if (value) onChange("");
+          }}
+          onKeyDown={onKeyDown}
+          autoComplete="off"
+        />
+
+        <span className="emp-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z"
+              stroke="currentColor"
+              strokeWidth="2"
+            />
+            <path d="M16.5 16.5 21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </span>
+      </div>
+
+      {open && !loading && (
+        <div className="emp-dropdown" role="listbox">
+          <div className="emp-group">{groupLabel}</div>
+
+          <div className="emp-list">
+            {filtered.length === 0 ? (
+              <div className="emp-empty">{t("visaNoEmployeeFound")}</div>
+            ) : (
+              filtered.map((emp, idx) => {
+                const name = `${formatEmployeePrenom(emp.prenom)} ${formatEmployeeNom(emp.nom)}`.trim();
+                const isActive = idx === activeIndex;
+                return (
+                  <button
+                    key={emp.id}
+                    type="button"
+                    className={`emp-item ${isActive ? "is-active" : ""}`}
+                    onMouseEnter={() => setActiveIndex(idx)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => selectEmp(emp)}
+                    role="option"
+                    aria-selected={String(value) === String(emp.id)}
+                  >
+                    {name}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** -------------------------------------------------------
+ * Section Dashboard (liste de dossiers par statut)
+ * ------------------------------------------------------ */
+// ✅ CHANGED: added onAbandonner prop
+function Section({ t, title, sectionStatus, innerRef, dossiers, onOpen, onAbandonner }) {
+  const isAccorde = sectionStatus === "VISA_ACCORDE";
+  const showProgress = sectionStatus === "EN_COURS" || sectionStatus === "PRET_POUR_DEPOT";
+  const showAbandonner = sectionStatus === "EN_COURS"; // ✅ CHANGED
+  const colCount = 6 + (showProgress ? 1 : 0) + (isAccorde ? 2 : 0) + 1;
+
+  return (
+    <div className="dossier-section" ref={innerRef}>
+      <div className="dossier-section-header">
+        <h2>{title}</h2>
+        <span className="dossier-count-badge">
+          {dossiers.length} {dossiers.length === 1 ? t("visaOneFile") : t("visaManyFiles")}
+        </span>
+      </div>
+
+      <table className="visa-table">
+        <thead>
+          <tr>
+            <th>{t("visaEmployee")}</th>
+            <th>{t("visaStatus")}</th>
+            <th>{t("visaReason")}</th>
+            <th>{t("visaDestination")}</th>
+            <th>{t("visaDeparture")}</th>
+            <th>{t("visaReturn")}</th>
+            {showProgress && <th>{t("visaProgress")}</th>}
+            {isAccorde && (
+              <>
+                <th>{t("visaVisaNumberShort")}</th>
+                <th>{t("visaValidity")}</th>
+              </>
+            )}
+            <th>{t("visaActions")}</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {dossiers.map((d) => {
+            const totalRequired = d.progress?.totalDocs ?? 0;
+            const okDocs = d.progress?.okDocs ?? 0;
+            const progressPercent = d.progress?.percent ?? 0;
+
+            return (
+              <tr key={d.id}>
+                <td>
+                  <div className="emp-cell-name">{d.employee?.name}</div>
+                  <div className="emp-cell-role">{translateStsJobTitle(d.employee?.poste, STS_MARKER)}</div>
+                  {d.employee?.department && <div className="emp-cell-dept">{d.employee.department}</div>}
+                </td>
+
+                <td>
+                  <StatusPill status={d.status} t={t} />
+                </td>
+
+                <td>{d.motif || "—"}</td>
+                <td>{d.destination || "—"}</td>
+                <td>{d.departureDate}</td>
+                <td>{d.returnDate}</td>
+
+                {showProgress && (
+                  <td>
+                    <div className="progress-container">
+                      <div className="progress-row">
+                        <span className="progress-count">
+                          {okDocs}/{totalRequired || 0}
+                        </span>
+                        <span className="progress-pct">{progressPercent}%</span>
+                      </div>
+
+                      <div className="progress-bar-small">
+                        <div className="progress-fill-small" style={{ width: `${progressPercent}%` }} />
+                      </div>
+                    </div>
+                  </td>
+                )}
+
+                {isAccorde && (
+                  <>
+                    <td>{d.visa?.numero || "—"}</td>
+                    <td>{d.visa?.dateDebut && d.visa?.dateFin ? `${d.visa.dateDebut} → ${d.visa.dateFin}` : "—"}</td>
+                  </>
+                )}
+
+                <td>
+                  <button className="btn-link" onClick={() => onOpen(d.id)}>
+                    {t("visaConsult")}
+                  </button>
+                  {/* ✅ CHANGED: Abandonner button only for EN_COURS */}
+                  {showAbandonner && (
+                    <button
+                      className="btn-danger"
+                      style={{ marginLeft: 8, padding: "4px 10px", fontSize: "0.82rem" }}
+                      onClick={() => onAbandonner(d)}
+                    >
+                      {t("visaAbandonDossier")}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+
+          {dossiers.length === 0 && (
+            <tr>
+              <td colSpan={colCount} className="empty">
+                <div><LuFolder size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /></div>
+                <div>{t("visaNoFileInList")}</div>
+                <div>{t("visaCreateNewToStart")}</div>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** -------------------------------------------------------
+ * Détail d'un dossier visa
+ * ------------------------------------------------------ */
+function DossierDetail({
+  t,
+  dossier,
+  onUpdateDocStatus,
+  onUpdateDossierStatus,
+  onGeneratePdf,
+  onSendSpecificEmail,
+  onOpenProtectedFile,
+  steps,
+  docStatusLabelMap,
+}) {
+  const [showVisaAccordeModal, setShowVisaAccordeModal] = useState(false);
+  const [showPretDepotModal, setShowPretDepotModal] = useState(false);
+  const [showVisaRefuseModal, setShowVisaRefuseModal] = useState(false);
+
+  const [visaAccordeData, setVisaAccordeData] = useState({
+    numeroVisa: "",
+    dateDebut: "",
+    dateFin: "",
+  });
+
+  const summary = useMemo(() => {
+    const docs = dossier.documents || [];
+    const totalRequired = docs.length;
+    const ok = docs.filter(isDocumentSatisfied).length;
+    const missing = docs.filter((d) => !isDocumentSatisfied(d)).length;
+    const physicalDocs = docs.filter((d) => d.mode === "PHYSICAL").length;
+
+    const progressPercent = totalRequired > 0 ? Math.round((ok / totalRequired) * 100) : 0;
+    return { totalRequired, ok, missing, physicalDocs, progressPercent };
+  }, [dossier]);
+
+  const allDocumentsProvided = useMemo(() => {
+    const requiredDocs = dossier.documents || [];
+    return requiredDocs.every(isDocumentSatisfied);
+  }, [dossier]);
+
+  const isFinal = dossier.status === "VISA_ACCORDE" || dossier.status === "VISA_REFUSE";
+
+  const canOpenPretDepotModal =
+    (dossier.status === "EN_COURS" || dossier.status === "PRET_POUR_DEPOT") && allDocumentsProvided && !isFinal;
+
+  function markDocumentReceived(doc) {
+    const nextStatus = "RECEIVED_PHYSICAL";
+    onUpdateDocStatus(doc.id, nextStatus);
+    toast.success(t("visaReceivedBtn"));
+  }
+
+  const canConfirmPretDepot = dossier.status === "EN_COURS" && allDocumentsProvided && !isFinal;
+
+  const canDecideVisa = dossier.status === "PRET_POUR_DEPOT" && !isFinal;
+
+  const stepIndex = useMemo(() => {
+    const isFinalLocal = dossier.status === "VISA_ACCORDE" || dossier.status === "VISA_REFUSE";
+    if (isFinalLocal) return steps.length;
+    if (dossier.status === "PRET_POUR_DEPOT") return 2;
+    return 0;
+  }, [dossier.status, steps.length]);
+
+  const handlePretDepotClick = () => {
+    if (!allDocumentsProvided) {
+      toast.error(t("visaAllDocsRequiredBeforeReady"));
+      return;
+    }
+    setShowPretDepotModal(true);
+  };
+
+  const handleVisaAccordeSubmit = () => {
+    if (!visaAccordeData.numeroVisa || !visaAccordeData.dateDebut || !visaAccordeData.dateFin) {
+      toast.error(t("visaFillVisaNumberAndDates"));
+      return;
+    }
+
+    onUpdateDossierStatus(dossier.id, "VISA_ACCORDE", {
+      visaNumero: visaAccordeData.numeroVisa,
+      visaDateDebut: visaAccordeData.dateDebut,
+      visaDateFin: visaAccordeData.dateFin,
+    });
+
+    toast.success(t("visaGrantedSaved"));
+    setShowVisaAccordeModal(false);
+    setVisaAccordeData({ numeroVisa: "", dateDebut: "", dateFin: "" });
+  };
+
+  const handleVisaRefuseClick = () => {
+    if (!canDecideVisa) return;
+    setShowVisaRefuseModal(true);
+  };
+
+  return (
+    <>
+      <section className="detail-grid">
+        {/* LEFT */}
+        <section className="card-detail">
+          <div className="section-header">
+            <h2>{t("visaFileSummary")}</h2>
+          </div>
+
+          <div className="detail-inner">
+            <Stepper stepIndex={stepIndex} steps={steps} />
+
+            <p className="detail-strong-line">
+              <strong>{dossier.employee?.name}</strong> – {translateStsJobTitle(dossier.employee?.poste, STS_MARKER)}
+            </p>
+
+            <p>
+              {t("visaTripReason")} : <strong>{dossier.motif || "—"}</strong>
+            </p>
+
+            <p>
+              {t("visaDestination")} : <strong>{dossier.destination || "—"}</strong>
+            </p>
+
+            <p>
+              {t("visaDeparture")} : <strong>{dossier.departureDate}</strong>
+            </p>
+
+            <p>
+              {t("visaReturn")} : <strong>{dossier.returnDate}</strong>
+            </p>
+
+            <div className="status-block">
+              <span className="label">{t("visaFileStatus")} :</span>
+              <StatusPill status={dossier.status} t={t} />
+            </div>
+
+            <div className="progress">
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${summary.progressPercent}%` }} />
+              </div>
+              <span className="progress-text">
+                {summary.progressPercent}
+                {t("visaDocsProvidedPct")}
+              </span>
+            </div>
+
+            <p className="muted">
+              {summary.ok}/{summary.totalRequired} {t("visaDocsProvidedCountLine")} – {summary.missing}{" "}
+              {t("visaMissingDocs")} ({summary.physicalDocs} {t("visaPhysicalToBring")}).
+            </p>
+
+            <div className="actions-stack">
+              <div className="primary-action">
+                <button
+                  className="btn-primary"
+                  disabled={!canOpenPretDepotModal}
+                  title={isFinal ? t("visaFileClosed") : !allDocumentsProvided ? t("visaAllDocsRequiredBeforeReady") : ""}
+                  onClick={handlePretDepotClick}
+                >
+                  {t("visaReadyToSubmitBtn")}
+                </button>
+              </div>
+
+              <div className="decision-block">
+                <div className="decision-title">{t("visaDecisionTitle")}</div>
+
+                <div className="decision-actions">
+                  <button className="btn-success" disabled={!canDecideVisa} onClick={() => setShowVisaAccordeModal(true)}>
+                    {t("visaGrantedBtn")}
+                  </button>
+
+                  <button className="btn-danger" disabled={!canDecideVisa} onClick={handleVisaRefuseClick}>
+                    {t("visaRefusedBtn")}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {!canDecideVisa && !isFinal && (
+              <div className="detail-hint">
+                <LockedHint text={t("visaResultLockedHint")} />
+              </div>
+            )}
+
+            {isFinal && (
+              <div className="detail-hint">
+                <LockedHint text={t("visaFileClosedHint")} />
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="card-detail">
+          <div className="section-header">
+            <h2>{t("visaFileDocs")}</h2>
+          </div>
+
+          <table className="docs-table">
+            <thead>
+              <tr>
+                <th>{t("visaDoc")}</th>
+                <th>{t("visaType")}</th>
+                <th>{t("visaStatus")}</th>
+                <th>{t("visaActions")}</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {(dossier.documents || []).map((doc) => {
+                const typeLabel = getDocumentType(doc.code, t);
+                const displayLabel = getDocumentTypeDisplayLabel(doc.code, t);
+                const displayStatus = getDisplayDocumentStatus(doc);
+                const badgeClass = `document-type-badge ${typeToCssClass(typeLabel)}`;
+                const isOk = isDocumentSatisfied(doc);
+
+                return (
+                  <tr key={doc.id} className={isOk ? "doc-row-ok" : "doc-row-pending"}>
+                    <td className="doc-name-cell">
+                      {isOk && <span className="doc-check">✓</span>}
+                      {doc.label}
+                    </td>
+
+                    <td>
+                      <span className={badgeClass}>{displayLabel}</span>
+                    </td>
+
+                    <td>
+                      <span className={`doc-status doc-${displayStatus}`}>{docStatusLabelMap[displayStatus] || displayStatus}</span>
+                    </td>
+
+                    <td className="doc-actions">
+                      {isFinal ? (
+                        <span className="muted">{t("visaFileClosed")}</span>
+                      ) : (
+                        <>
+                          {doc.mode === "PHYSICAL" && (
+                            <button
+                              className="btn-physical"
+                              onClick={() => markDocumentReceived(doc)}
+                            >
+                              {t("visaReceivedBtn")}
+                            </button>
+                          )}
+
+                          {(doc.code === "ASSURANCE" || doc.code === "BILLET_AVION") && (
+                            <>
+                              <button onClick={() => onSendSpecificEmail(doc)}>{t("visaSendEmailBtn")}</button>
+                              <button onClick={() => markDocumentReceived(doc)}>{t("visaReceivedBtn")}</button>
+                            </>
+                          )}
+
+                          {doc.code === "FRAIS_VISA" && (
+                            <>
+                              <button
+                                onClick={() =>
+                                  window.open(
+                                    "https://france-visas.gouv.fr/fr-FR/web/france-visas/accueil",
+                                    "_blank",
+                                    "noopener,noreferrer"
+                                  )
+                                }
+                              >
+                                {t("visaFillFormBtn")}
+                              </button>
+                              <button onClick={() => markDocumentReceived(doc)}>{t("visaReceivedBtn")}</button>
+                            </>
+                          )}
+
+                          {doc.code === "RESERVATION_HOTEL" && (
+                            <>
+                              <button
+                                className="btn-booking"
+                                onClick={() => window.open("https://www.booking.com", "_blank", "noopener,noreferrer")}
+                              >
+                                {t("visaBookHotelBtn")}
+                              </button>
+                              <button onClick={() => markDocumentReceived(doc)}>{t("visaReceivedBtn")}</button>
+                            </>
+                          )}
+
+                          {doc.code === "INVITATION" && (
+                            <>
+                              <button onClick={() => onGeneratePdf(doc)}>{t("visaGeneratePdfBtn")}</button>
+                              <button
+                                disabled={!getGeneratedDocumentUrl(doc)}
+                                onClick={() => {
+                                  const generatedUrl = getGeneratedDocumentUrl(doc);
+                                  if (!generatedUrl) return toast.error(t("visaNoGeneratedFile"));
+                                  onOpenProtectedFile(generatedUrl).catch((e) => toast.error(e.message));
+                                }}
+                              >
+                                {t("visaPreviewBtn")}
+                              </button>
+                              <button onClick={() => onSendSpecificEmail(doc)}>{t("visaSendEmailBtn")}</button>
+                              <button onClick={() => markDocumentReceived(doc)}>{t("visaReceivedBtn")}</button>
+                            </>
+                          )}
+
+                          {(doc.code === "ATTESTATION_TRAVAIL" || doc.code === "ORDRE_MISSION") && (
+                            <>
+                              <button onClick={() => onGeneratePdf(doc)}>{t("visaGeneratePdfBtn")}</button>
+                              <button
+                                disabled={!getGeneratedDocumentUrl(doc)}
+                                onClick={() => {
+                                  const generatedUrl = getGeneratedDocumentUrl(doc);
+                                  if (!generatedUrl) return toast.error(t("visaNoGeneratedFile"));
+                                  onOpenProtectedFile(generatedUrl).catch((e) => toast.error(e.message));
+                                }}
+                              >
+                                {t("visaPreviewBtn")}
+                              </button>
+                              <button onClick={() => markDocumentReceived(doc)}>{t("visaReceivedBtn")}</button>
+                            </>
+                          )}
+
+                          {doc.mode === "UPLOAD" &&
+                            ![
+                              "FRAIS_VISA",
+                              "RESERVATION_HOTEL",
+                              "ATTESTATION_TRAVAIL",
+                              "INVITATION",
+                              "ORDRE_MISSION",
+                              "ASSURANCE",
+                              "BILLET_AVION",
+                            ].includes(doc.code) && (
+                              <>
+                                <button onClick={() => markDocumentReceived(doc)}>{t("visaReceivedBtn")}</button>
+                                {doc.code === "FICHES_PAIE" ? (
+                                  // Special handling for multiple files
+                                  doc.fileUrl ? false && (
+                                    (() => {
+                                      try {
+                                        const files = JSON.parse(doc.fileUrl);
+                                        return files.map((file, index) => (
+                                          <button
+                                            style={{ display: "none" }}
+                                            key={index}
+                                            onClick={() => {
+                                              onOpenProtectedFile(file.url).catch((e) => toast.error(e.message));
+                                            }}
+                                          >
+                                            {t("visaPreviewBtn")} {index + 1}
+                                          </button>
+                                        ));
+                                      } catch (e) {
+                                        return (
+                                          <button
+                                            style={{ display: "none" }}
+                                            onClick={() => {
+                                              onOpenProtectedFile(doc.fileUrl).catch((e) => toast.error(e.message));
+                                            }}
+                                          >
+                                            {t("visaPreviewBtn")}
+                                          </button>
+                                        );
+                                      }
+                                    })()
+                                  ) : false && (
+                                    <>
+                                      <button disabled title="Fiche de paie 1 - À télécharger">
+                                        {t("visaPreviewBtn")} 1
+                                      </button>
+                                      <button disabled title="Fiche de paie 2 - À télécharger">
+                                        {t("visaPreviewBtn")} 2
+                                      </button>
+                                      <button disabled title="Fiche de paie 3 - À télécharger">
+                                        {t("visaPreviewBtn")} 3
+                                      </button>
+                                    </>
+                                  )
+                                ) : false && (
+                                  <button
+                                    style={{ display: "none" }}
+                                    disabled={!doc.fileUrl}
+                                    onClick={() => {
+                                      if (!doc.fileUrl) return toast.error(t("visaMissingPdf"));
+                                      onOpenProtectedFile(doc.fileUrl).catch((e) => toast.error(e.message));
+                                    }}
+                                  >
+                                    {t("visaPreviewBtn")}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      </section>
+
+      {/* MODAL VISA ACCORDE */}
+      {showVisaAccordeModal && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h2>
+                {t("visaGrantedModalTitle")} {dossier.employee?.name}
+              </h2>
+              <button className="modal-close" onClick={() => setShowVisaAccordeModal(false)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="create-form">
+              {!canDecideVisa ? (
+                <p className="error-text">{t("visaMustBeReadyToSubmitFirst")}</p>
+              ) : (
+                <>
+                  <div className="form-row">
+                    <div>
+                      <label>{t("visaVisaNumber")}</label>
+                      <input
+                        type="text"
+                        value={visaAccordeData.numeroVisa}
+                        onChange={(e) => setVisaAccordeData((p) => ({ ...p, numeroVisa: e.target.value }))}
+                        placeholder="Ex: F12345678"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-row">
+                    <div>
+                      <label>{t("visaValidityStart")}</label>
+                      <input
+                        type="date"
+                        value={visaAccordeData.dateDebut}
+                        onChange={(e) => setVisaAccordeData((p) => ({ ...p, dateDebut: e.target.value }))}
+                      />
+                    </div>
+
+                    <div>
+                      <label>{t("visaValidityEnd")}</label>
+                      <input
+                        type="date"
+                        value={visaAccordeData.dateFin}
+                        onChange={(e) => setVisaAccordeData((p) => ({ ...p, dateFin: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-actions">
+                    <button type="button" className="btn-outline" onClick={() => setShowVisaAccordeModal(false)}>
+                      {t("visaCancel")}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn-success"
+                      onClick={handleVisaAccordeSubmit}
+                      disabled={!visaAccordeData.numeroVisa || !visaAccordeData.dateDebut || !visaAccordeData.dateFin}
+                    >
+                      {t("visaConfirmGranted")}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PRET POUR DEPOT */}
+      {showPretDepotModal && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h2>
+                {t("visaReadyDocsModalTitle")} {dossier.employee?.name}
+              </h2>
+              <button className="modal-close" onClick={() => setShowPretDepotModal(false)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="create-form">
+              <div className="form-row">
+                <div className="ready-docs-wrap">
+                  <h3>{t("visaProvidedDocsList")}</h3>
+
+                  <ul className="ready-docs-list">
+                    {(dossier.documents || [])
+                      .filter((doc) => isDocumentSatisfied(doc))
+                      .map((doc) => (
+                        <li key={doc.id} className="ready-doc-item">
+                          <strong>{doc.label}</strong>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button type="button" className="btn-outline" onClick={() => setShowPretDepotModal(false)}>
+                  {t("visaCancel")}
+                </button>
+
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => {
+                    if (!canConfirmPretDepot) return;
+                    onUpdateDossierStatus(dossier.id, "PRET_POUR_DEPOT");
+                    toast.success(t("visaReadyMarked"));
+                    setShowPretDepotModal(false);
+                  }}
+                  disabled={!canConfirmPretDepot}
+                >
+                  {t("visaConfirmReadyToSubmit")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL VISA REFUSÉ */}
+      {showVisaRefuseModal && (
+        <div className="modal-overlay" onMouseDown={() => setShowVisaRefuseModal(false)}>
+          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>
+                {t("visaRefusedModalTitle")} {dossier.employee?.name}
+              </h2>
+              <button className="modal-close" onClick={() => setShowVisaRefuseModal(false)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="create-form">
+              <p className="toast-refuse-text" style={{ marginTop: 0 }}>
+                {t("visaRefusedFinalWarning")}
+              </p>
+
+              <div className="form-actions">
+                <button type="button" className="btn-outline" onClick={() => setShowVisaRefuseModal(false)}>
+                  {t("visaCancel")}
+                </button>
+
+                <button
+                  type="button"
+                  className="btn-danger"
+                  onClick={() => {
+                    onUpdateDossierStatus(dossier.id, "VISA_REFUSE");
+                    toast.success(t("visaRefusedClosed"), { position: "top-right" });
+                    setShowVisaRefuseModal(false);
+                  }}
+                >
+                  {t("visaConfirmRefusal")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** -------------------------------------------------------
+ * ✅ Page principale Visa
+ * ------------------------------------------------------ */
+const EMPTY_FORM = {
+  employeeId: "",
+  departureDate: "",
+  returnDate: "",
+  motif: "",
+  destination: "",
+};
+
+export default function Visa() {
+  const { t, language } = useLanguage();
+
+  const [dossiers, setDossiers] = useState([]);
+  const [selectedDossierId, setSelectedDossierId] = useState(null);
+  const [selectedDossier, setSelectedDossier] = useState(null);
+
+  const [search, setSearch] = useState("");
+  // ✅ CHANGED: added statusFilter state
+  const [statusFilter, setStatusFilter] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [newDossierForm, setNewDossierForm] = useState(EMPTY_FORM);
+  const [formError, setFormError] = useState("");
+
+  const [employees, setEmployees] = useState([]);
+  const [employeesLoading, setEmployeesLoading] = useState(false);
+
+  const [pageLoading, setPageLoading] = useState(false);
+
+  // ✅ CHANGED: added confirm delete state
+  const [abandonnerTarget, setAbandonnerTarget] = useState(null);
+
+  const enCoursRef = useRef(null);
+  const pretDepotRef = useRef(null);
+  const visaAccordeRef = useRef(null);
+  const visaRefuseRef = useRef(null);
+
+  const steps = useMemo(() => getSteps(t), [language, t]);
+  const docStatusLabelMap = useMemo(() => getDocumentStatusLabel(t), [language, t]);
+
+  const getToken = useCallback(() => localStorage.getItem("token"), []);
+  const getAuthHeaders = useCallback(() => {
+    const token = getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, [getToken]);
+
+  const fetchJson = useCallback(
+    async (url, options = {}) => {
+      const res = await fetch(url, {
+        ...options,
+        headers: {
+          ...(options.headers || {}),
+          ...getAuthHeaders(),
+        },
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 401) {
+        throw new Error(t("visaUnauthorized401"));
+      }
+      if (!res.ok) {
+        throw new Error(data?.message || `Erreur HTTP ${res.status}`);
+      }
+      return data;
+    },
+    [getAuthHeaders, t]
+  );
+
+  const openProtectedFile = useCallback(
+    async (fileUrl) => {
+      if (!fileUrl) throw new Error(t("visaMissingFileUrl"));
+      if (!isValidHttpUrl(fileUrl)) throw new Error(t("visaInvalidUrl"));
+      window.open(fileUrl, "_blank", "noopener,noreferrer");
+    },
+    [t]
+  );
+
+  useEffect(() => {
+    if (!API) {
+      toast.error(t("visaMissingApiEnv"));
+      return;
+    }
+
+    (async () => {
+      setEmployeesLoading(true);
+      try {
+        const data = await fetchJson(`${API}/api/employee`);
+        setEmployees(Array.isArray(data) ? data : []);
+      } catch (e) {
+        toast.error(e.message || t("visaLoadingEmployeesError"));
+      } finally {
+        setEmployeesLoading(false);
+      }
+    })();
+  }, [fetchJson, t]);
+
+  const refreshDossiers = useCallback(async () => {
+    if (!API) return;
+    try {
+      setPageLoading(true);
+      const data = await fetchJson(`${API}/api/visa-dossiers`);
+      setDossiers(Array.isArray(data) ? data : []);
+    } catch (e) {
+      toast.error(e.message || t("visaLoadingFilesError"));
+    } finally {
+      setPageLoading(false);
+    }
+  }, [fetchJson, t]);
+
+  useEffect(() => {
+    refreshDossiers();
+  }, [refreshDossiers]);
+
+  const openDossier = useCallback(
+    async (dossierId) => {
+      try {
+        const data = await fetchJson(`${API}/api/visa-dossiers/${dossierId}`);
+        setSelectedDossierId(dossierId);
+        setSelectedDossier(data);
+      } catch (e) {
+        toast.error(e.message || t("visaOpenFileError"));
+      }
+    },
+    [fetchJson, t]
+  );
+
+  // ✅ CHANGED: filteredDossiers now also filters by statusFilter
+  const filteredDossiers = useMemo(() => {
+    const term = search.toLowerCase().trim();
+    return dossiers.filter((d) => {
+      const matchesSearch = !term
+        ? true
+        : (d.employee?.name || "").toLowerCase().includes(term) || (d.motif || "").toLowerCase().includes(term);
+      const matchesStatus = !statusFilter ? true : d.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [dossiers, search, statusFilter]);
+
+  const dossiersEnCours = filteredDossiers.filter((d) => d.status === "EN_COURS");
+  const dossiersPretDepot = filteredDossiers.filter((d) => d.status === "PRET_POUR_DEPOT");
+  const dossiersVisaAccorde = filteredDossiers.filter((d) => d.status === "VISA_ACCORDE");
+  const dossiersVisaRefuse = filteredDossiers.filter((d) => d.status === "VISA_REFUSE");
+
+  const stats = useMemo(
+    () => ({
+      enCours: dossiers.filter((d) => d.status === "EN_COURS").length,
+      pretDepot: dossiers.filter((d) => d.status === "PRET_POUR_DEPOT").length,
+      visaAccorde: dossiers.filter((d) => d.status === "VISA_ACCORDE").length,
+      visaRefuse: dossiers.filter((d) => d.status === "VISA_REFUSE").length,
+    }),
+    [dossiers]
+  );
+
+  // ✅ CHANGED: KPI click handler — sets filter and scrolls to section
+  function handleKpiClick(status, ref) {
+    setStatusFilter((prev) => {
+      const next = prev === status ? "" : status; // toggle off if same
+      return next;
+    });
+    setTimeout(() => {
+      ref?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
+
+  // ✅ CHANGED: Abandonner — show confirm modal
+  function handleAbandonnerClick(dossier) {
+    setAbandonnerTarget(dossier);
+  }
+
+  // ✅ CHANGED: Confirm delete dossier
+  async function handleAbandonnerConfirm() {
+    if (!abandonnerTarget) return;
+    const loadingId = toast.loading(t("visaAbandonLoading"));
+    try {
+      const res = await fetch(`${API}/api/visa-dossiers/${abandonnerTarget.id}`, {
+        method: "DELETE",
+        headers: { ...getAuthHeaders() },
+      });
+      toast.dismiss(loadingId);
+      if (res.status === 401) throw new Error(t("visaUnauthorized401"));
+      if (!res.ok) throw new Error(`Erreur HTTP ${res.status}`);
+      toast.success(`Dossier de ${abandonnerTarget.employee?.name || ""} supprimé.`);
+      setAbandonnerTarget(null);
+      await refreshDossiers();
+    } catch (e) {
+      toast.dismiss(loadingId);
+      toast.error(e.message || "Erreur lors de la suppression.");
+      setAbandonnerTarget(null);
+    }
+  }
+
+  function handleOpenCreate() {
+    setIsCreating(true);
+    setFormError("");
+    setNewDossierForm(EMPTY_FORM);
+  }
+
+  function handleCancelCreate() {
+    setIsCreating(false);
+    setFormError("");
+    setNewDossierForm(EMPTY_FORM);
+  }
+
+  async function handleCreateDossier(e) {
+    e.preventDefault();
+    const { employeeId, departureDate, returnDate, motif, destination } = newDossierForm;
+
+    if (!employeeId || !departureDate || !returnDate || !motif || !destination) {
+      setFormError(t("visaFillAllRequired"));
+      toast.error(t("visaFillAllRequired"));
+      return;
+    }
+    if (returnDate < departureDate) {
+      setFormError(t("visaReturnDateAfterDeparture"));
+      toast.error(t("visaReturnDateAfterDeparture"));
+      return;
+    }
+
+    const emp = employees.find((x) => String(x.id) === String(employeeId));
+    const employeeName = emp ? `${formatEmployeePrenom(emp.prenom)} ${formatEmployeeNom(emp.nom)}`.trim() : t("visaEmployeeGeneric");
+
+    const loadingId = toast.loading(t("visaCreateFileLoading"));
+    try {
+      const data = await fetchJson(`${API}/api/visa-dossiers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employeeId: Number(employeeId),
+          motif,
+          departureDate,
+          returnDate,
+          destination,
+        }),
+      });
+
+      toast.dismiss(loadingId);
+
+      if (data?.emailSent) {
+        toast.success(`${t("visaFileCreatedEmailSent")} ${employeeName}.`, { duration: 9000 });
+      } else {
+        toast.error(
+          `${t("visaFileCreatedEmailNotSent")} ${employeeName}. ${data?.emailError ? `(${data.emailError})` : ""}`,
+          { duration: 8000 }
+        );
+      }
+
+      await refreshDossiers();
+      await openDossier(data.id);
+      setIsCreating(false);
+      setNewDossierForm(EMPTY_FORM);
+      setFormError("");
+    } catch (err) {
+      toast.dismiss(loadingId);
+      setFormError(err.message);
+      toast.error(err.message || t("visaCreateError"));
+    }
+  }
+
+  async function updateDocStatus(docId, status, extra = {}) {
+    try {
+      await fetchJson(`${API}/api/visa-documents/${docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, ...extra }),
+      });
+
+      if (selectedDossierId) {
+        await openDossier(selectedDossierId);
+        refreshDossiers();
+      } else await refreshDossiers();
+    } catch (e) {
+      toast.error(e.message || t("visaUpdateDocError"));
+    }
+  }
+
+  async function updateDossierStatus(dossierId, status, visaData = null) {
+    try {
+      await fetchJson(`${API}/api/visa-dossiers/${dossierId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, ...(visaData || {}) }),
+      });
+
+      await refreshDossiers();
+      await openDossier(dossierId);
+    } catch (e) {
+      toast.error(e.message || t("visaUpdateFileError"));
+    }
+  }
+
+  async function generatePdf(doc) {
+    const dossier = selectedDossier;
+    if (!dossier) return;
+
+    const employeId = dossier.employee?.id;
+    if (!employeId) {
+      toast.error(t("visaEmployeeNotFoundInFile"));
+      return;
+    }
+
+    let url = "";
+    let body = {};
+
+    if (doc.code === "ATTESTATION_TRAVAIL") {
+      url = `${API}/api/attestation-travail`;
+      body = { employeId, docId: doc.id };
+    } else if (doc.code === "INVITATION") {
+      url = `${API}/api/invitation-prise-en-charge`;
+      body = {
+        employeId,
+        dateDebutSejour: dossier.departureDate,
+        dateFinSejour: dossier.returnDate,
+        docId: doc.id,
+      };
+    } else if (doc.code === "ORDRE_MISSION") {
+      url = `${API}/api/ordre-mission`;
+      body = {
+        employeId,
+        objectifMission: dossier.motif,
+        dateDebutMission: dossier.departureDate,
+        dateFinMission: dossier.returnDate,
+        docId: doc.id,
+      };
+    } else {
+      toast.error(t("visaGenerationNotAvailable"));
+      return;
+    }
+
+    const loadingId = toast.loading(t("visaGenerating"));
+    try {
+      const data = await fetchJson(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      toast.dismiss(loadingId);
+
+      toast.success(t("visaGeneratedSuccess"));
+
+      if (data?.fileUrl && doc.code !== "INVITATION") {
+        await openProtectedFile(data.fileUrl);
+      }
+
+      await openDossier(selectedDossierId);
+    } catch (e) {
+      toast.dismiss(loadingId);
+      toast.error(e.message || t("visaGenerationError"));
+    }
+  }
+
+  async function sendSpecificEmail(doc) {
+    if (!selectedDossierId) return;
+
+    // Récupérer les informations du dossier
+    const dossier = await fetchJson(`${API}/api/visa-dossiers/${selectedDossierId}`);
+    const employeeName =
+      dossier?.employee?.name ||
+      `${formatEmployeePrenom(dossier?.employee?.prenom)} ${formatEmployeeNom(dossier?.employee?.nom)}`.trim() ||
+      t("visaEmployeeGeneric");
+    dossier.date_depart = dossier?.departureDate || dossier?.date_depart || "-";
+    dossier.date_retour = dossier?.returnDate || dossier?.date_retour || "-";
+
+    let subject = "";
+    let body = "";
+
+    if (doc.code === "ASSURANCE") {
+      subject = `Demande Assurance Voyage – ${employeeName}`;
+      body = `Bonjour,
+
+Merci de fournir l'assurance voyage pour :
+
+Employé : ${employeeName}
+Date départ : ${dossier.date_depart}
+Date retour : ${dossier.date_retour}
+
+Merci,
+${"RH Application"}`;
+    } else if (doc.code === "BILLET_AVION") {
+      subject = `Demande Billet d'avion – ${employeeName}`;
+      body = `Bonjour,
+
+Merci de fournir le billet d'avion pour :
+
+Employé : ${employeeName}
+Date départ : ${dossier.date_depart}
+Date retour : ${dossier.date_retour}
+
+Merci,
+${"RH Application"}`;
+    } else if (doc.code === "INVITATION") {
+      const generatedUrl =
+        doc.generatedFileUrl || (!isPdfFileRef(doc.fileUrl, doc.originalFilename) ? doc.fileUrl : "");
+      if (!generatedUrl) {
+        toast.error(t("visaNoGeneratedFile"));
+        return;
+      }
+
+      subject = `Invitation(s) a signer - ${employeeName}`;
+      body = `Bonjour,
+
+Merci de bien vouloir signer le(s) invitation(s) ci-joint et me les renvoyer dans les plus brefs délais.
+
+Bien cordialement.`;
+    } else {
+      toast.error(t("visaEmailNotAvailable"));
+      return;
+    }
+
+    // Encoder pour l'URL
+    const encodedSubject = encodeURIComponent(subject);
+    const encodedBody = encodeURIComponent(body);
+
+    // Ouvrir Outlook avec mailto
+    const mailtoUrl = `mailto:?subject=${encodedSubject}&body=${encodedBody}`;
+    window.location.href = mailtoUrl;
+
+    toast.success(t("visaEmailOpened"));
+  }
+
+  function handleStatusJump(e) {
+    const value = e.target.value;
+    if (!value) return;
+
+    const map = {
+      EN_COURS: enCoursRef,
+      PRET_POUR_DEPOT: pretDepotRef,
+      VISA_ACCORDE: visaAccordeRef,
+      VISA_REFUSE: visaRefuseRef,
+    };
+
+    map[value]?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  if (pageLoading && !selectedDossier) {
+    return (
+      <div className="layout">
+        <Sidebar />
+        <div className="main">
+          <div className="page-header-card">
+            <div className="page-header-icon"><LuClipboardList size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /></div>
+            <div className="page-header-text">
+              <h1 className="page-title">{t("visaTitle")}</h1>
+              <p className="page-subtitle">{t("loading")}</p>
+            </div>
+          </div>
+          <div className="loading" style={{ padding: 24 }}>
+            <div className="loading-spinner" />
+            <p>{t("visaLoadingFiles")}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="layout">
+      <Sidebar />
+
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          style: {
+            minWidth: "420px",
+            maxWidth: "560px",
+            padding: "18px 22px",
+            fontSize: "1.05rem",
+            fontWeight: "600",
+            lineHeight: "1.5",
+            borderRadius: "16px",
+            boxShadow: "0 16px 40px rgba(15, 23, 42, 0.25)",
+          },
+          success: {
+            style: { background: "#ecfdf5", color: "#065f46", borderLeft: "7px solid #16a34a" },
+            iconTheme: { primary: "#16a34a", secondary: "#ecfdf5" },
+          },
+          error: {
+            style: { background: "#fef2f2", color: "#7f1d1d", borderLeft: "7px solid #dc2626" },
+            iconTheme: { primary: "#dc2626", secondary: "#fef2f2" },
+          },
+          loading: {
+            style: { background: "#eff6ff", color: "#1e3a8a", borderLeft: "7px solid #2563eb" },
+          },
+        }}
+      />
+
+      <div className="main">
+        <div className="page-header-card">
+          <div className="page-header-text">
+            <h1 className="page-title">{t("visaTitle")}</h1>
+            <p className="page-subtitle">{selectedDossier ? t("visaSubtitleDetail") : t("visaSubtitleDashboard")}</p>
+          </div>
+
+          {selectedDossier && (
+            <button
+              className="btn-outline"
+              onClick={() => {
+                setSelectedDossierId(null);
+                setSelectedDossier(null);
+                refreshDossiers();
+              }}
+            >
+              ← {t("visaBackToDashboard")}
+            </button>
+          )}
+        </div>
+
+        {!selectedDossier && (
+          <div className="page-toolbar">
+            <div className="toolbar-left">
+              <div className="search-wrapper">
+                <input
+                  type="text"
+                  placeholder={t("visaSearchPlaceholder")}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+                <span className="search-icon"><LuSearch size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /></span>
+              </div>
+            </div>
+
+            <div className="toolbar-center">
+              <span className="toolbar-count">
+                {filteredDossiers.length} {filteredDossiers.length === 1 ? t("visaOneFileFound") : t("visaFilesFound")}
+              </span>
+              {/* ✅ CHANGED: show active filter badge with clear button */}
+              {statusFilter && (
+                <button
+                  onClick={() => setStatusFilter("")}
+                  style={{
+                    marginLeft: 10,
+                    background: "#eff6ff",
+                    border: "1px solid #bfdbfe",
+                    borderRadius: 20,
+                    padding: "2px 10px",
+                    color: "#1d4ed8",
+                    fontWeight: 600,
+                    fontSize: "0.82rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  ✕ Filtre actif
+                </button>
+              )}
+            </div>
+
+            <div className="toolbar-right">
+              <div className="status-filter-wrapper">
+                <select defaultValue="" onChange={handleStatusJump}>
+                  <option value="">{t("visaFilterStatus")}</option>
+                  <option value="EN_COURS">{t("visaStatusInProgress")}</option>
+                  <option value="PRET_POUR_DEPOT">{t("visaStatusReadyToSubmit")}</option>
+                  <option value="VISA_ACCORDE">{t("visaStatusGranted")}</option>
+                  <option value="VISA_REFUSE">{t("visaStatusRefused")}</option>
+                </select>
+              </div>
+
+              <button className="btn-primary" onClick={handleOpenCreate}>
+                + {t("visaNewFile")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!selectedDossier && isCreating && (
+          <div className="modal-overlay">
+            <div className="modal visa-create-modal">
+              <div className="modal-header visa-create-modal-header">
+                <h2>{t("visaCreateNewFile")}</h2>
+                <button className="modal-close" onClick={handleCancelCreate}>
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateDossier} className="create-form visa-create-form">
+                <div className="form-row">
+                  <div>
+                    <EmployeeSearchSelect
+                      t={t}
+                      label={t("visaFullName")}
+                      required
+                      employees={employees}
+                      loading={employeesLoading}
+                      value={newDossierForm.employeeId}
+                      onChange={(employeeId) => setNewDossierForm((p) => ({ ...p, employeeId }))}
+                      groupLabel={t("visaEmployeesGroupLabel")}
+                    />
+                  </div>
+
+                  <div>
+                    <label>
+                      {t("visaReason")} <span className="required">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="motif"
+                      value={newDossierForm.motif}
+                      onChange={(e) => setNewDossierForm((p) => ({ ...p, motif: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div>
+                    <label>
+                      {t("visaDestination")} <span className="required">*</span>
+                    </label>
+                    <select
+                      name="destination"
+                      value={newDossierForm.destination}
+                      onChange={(e) => setNewDossierForm((p) => ({ ...p, destination: e.target.value }))}
+                      required
+                    >
+                      <option value="">Sélectionnez une ville</option>
+                      <option value="Paris">Paris</option>
+                      <option value="Lyon">Lyon</option>
+                      <option value="Marseille">Marseille</option>
+                      <option value="Toulouse">Toulouse</option>
+                      <option value="Nice">Nice</option>
+                      <option value="Nantes">Nantes</option>
+                      <option value="Strasbourg">Strasbourg</option>
+                      <option value="Montpellier">Montpellier</option>
+                      <option value="Bordeaux">Bordeaux</option>
+                      <option value="Lille">Lille</option>
+                      <option value="Rennes">Rennes</option>
+                      <option value="Reims">Reims</option>
+                      <option value="Le Havre">Le Havre</option>
+                      <option value="Saint-Étienne">Saint-Étienne</option>
+                      <option value="Toulon">Toulon</option>
+                      <option value="Grenoble">Grenoble</option>
+                      <option value="Dijon">Dijon</option>
+                      <option value="Angers">Angers</option>
+                      <option value="Nîmes">Nîmes</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label>
+                      {t("visaDeparture")} <span className="required">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      name="departureDate"
+                      value={newDossierForm.departureDate}
+                      onChange={(e) => setNewDossierForm((p) => ({ ...p, departureDate: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div>
+                    <label>
+                      {t("visaReturn")} <span className="required">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      name="returnDate"
+                      value={newDossierForm.returnDate}
+                      onChange={(e) => setNewDossierForm((p) => ({ ...p, returnDate: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                {formError && <p className="error-text">{formError}</p>}
+
+                <div className="form-actions">
+                  <button type="button" className="btn-outline" onClick={handleCancelCreate}>
+                    {t("visaCancel")}
+                  </button>
+                  <button type="submit" className="btn-primary">
+                    {t("visaCreateFile")}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {!selectedDossier && (
+          <>
+            {/* ✅ CHANGED: KPI cards now clickable */}
+            <section className="kpi-grid">
+              <KpiCard
+                label={t("visaKpiInProgress")}
+                value={stats.enCours}
+                type="warning"
+                onClick={() => handleKpiClick("EN_COURS", enCoursRef)}
+              />
+              <KpiCard
+                label={t("visaKpiReadyToSubmit")}
+                value={stats.pretDepot}
+                type="info"
+                onClick={() => handleKpiClick("PRET_POUR_DEPOT", pretDepotRef)}
+              />
+              <KpiCard
+                label={t("visaKpiGranted")}
+                value={stats.visaAccorde}
+                type="success"
+                onClick={() => handleKpiClick("VISA_ACCORDE", visaAccordeRef)}
+              />
+              <KpiCard
+                label={t("visaKpiRefused")}
+                value={stats.visaRefuse}
+                type="danger"
+                onClick={() => handleKpiClick("VISA_REFUSE", visaRefuseRef)}
+              />
+            </section>
+
+            <div className="dossiers-container">
+              <Section
+                t={t}
+                title={t("visaSectionInProgress")}
+                sectionStatus="EN_COURS"
+                innerRef={enCoursRef}
+                dossiers={dossiersEnCours}
+                onOpen={openDossier}
+                onAbandonner={handleAbandonnerClick}
+              />
+              <Section
+                t={t}
+                title={t("visaSectionReadyToSubmit")}
+                sectionStatus="PRET_POUR_DEPOT"
+                innerRef={pretDepotRef}
+                dossiers={dossiersPretDepot}
+                onOpen={openDossier}
+                onAbandonner={handleAbandonnerClick}
+              />
+              <Section
+                t={t}
+                title={t("visaSectionGranted")}
+                sectionStatus="VISA_ACCORDE"
+                innerRef={visaAccordeRef}
+                dossiers={dossiersVisaAccorde}
+                onOpen={openDossier}
+                onAbandonner={handleAbandonnerClick}
+              />
+              <Section
+                t={t}
+                title={t("visaSectionRefused")}
+                sectionStatus="VISA_REFUSE"
+                innerRef={visaRefuseRef}
+                dossiers={dossiersVisaRefuse}
+                onOpen={openDossier}
+                onAbandonner={handleAbandonnerClick}
+              />
+            </div>
+          </>
+        )}
+
+        {selectedDossier && (
+          <DossierDetail
+            t={t}
+            dossier={selectedDossier}
+            onUpdateDocStatus={updateDocStatus}
+            onUpdateDossierStatus={updateDossierStatus}
+            onGeneratePdf={generatePdf}
+            onSendSpecificEmail={sendSpecificEmail}
+            onOpenProtectedFile={openProtectedFile}
+            steps={steps}
+            docStatusLabelMap={docStatusLabelMap}
+          />
+        )}
+
+        {/* ✅ CHANGED: Confirm delete modal */}
+        {abandonnerTarget && (
+          <div className="modal-overlay" onMouseDown={() => setAbandonnerTarget(null)}>
+            <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>{t("visaAbandonDossier")}</h2>
+                <button className="modal-close" onClick={() => setAbandonnerTarget(null)}>✕</button>
+              </div>
+              <div className="create-form">
+                <p style={{ marginTop: 0 }}>
+                  {t("visaAbandonConfirmMessage")} <strong>{abandonnerTarget.employee?.name}</strong> ?
+                  <br />
+                  <strong>{t("visaAbandonIrreversible")}</strong>
+                </p>
+                <div className="form-actions">
+                  <button type="button" className="btn-outline" onClick={() => setAbandonnerTarget(null)}>
+                    {t("visaAbandonCancel")}
+                  </button>
+                  <button type="button" className="btn-danger" onClick={handleAbandonnerConfirm}>
+                    {t("visaAbandonConfirmButton")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

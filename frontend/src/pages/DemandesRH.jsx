@@ -1,0 +1,1457 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import './DemandesRH.css';
+import Sidebar from '../components/Sidebar';
+import { useLanguage } from '../contexts/LanguageContext';
+import { useSiteFilter } from '../contexts/SiteFilterContext';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { getBackendBaseUrl } from '../utils/backendUrl';
+import { getCurrentUser, shouldHideHrGroupModules, isGlobalHrManager } from '../services/api';
+import { formatEmployeeNom, formatEmployeePrenom } from '../utils/employeeAvatar';
+import { getEmployeeSite, translateStsJobTitle } from '../utils/employeeProfile';
+import Pagination, { usePagination } from '../components/Pagination';
+
+import { AlertTriangle as LuAlertTriangle, CheckCircle2 as LuCheckCircle2, Clock as LuClock, Eraser as LuEraser, Eye as LuEye, FileText as LuFileText, Inbox as LuInbox, Palmtree as LuPalmtree, Plane as LuPlane, RefreshCw as LuRefreshCw, Tag as LuTag, Undo2 as LuUndo2, Upload as LuUpload, XCircle as LuXCircle } from 'lucide-react';
+const formatFullName = (prenom, nom) => `${formatEmployeePrenom(prenom)} ${formatEmployeeNom(nom)}`.trim();
+
+// ─── Modal moved OUTSIDE DemandesRH so it never gets redefined on re-render
+const Modal = ({
+  demande,
+  onClose,
+  rejectMode,
+  setRejectMode,
+  rejectComment,
+  setRejectComment,
+  actionLoading,
+  onApprove,
+  onReject,
+  onChangeToRefused,
+  onChangeToApproved,
+  changeStatusMode,
+  setChangeStatusMode,
+  changeStatusComment,
+  setChangeStatusComment,
+  t,
+  getTypeDemandeLabel,
+  getStatutBadge,
+  getResponsableStatus,
+  getResponsableStatusLabel,
+  getResponsableStatusClass,
+  formatDate,
+  formatDateTime,
+  readOnly,
+}) => {
+  if (!demande) return null;
+  const canAct = !readOnly && demande.statut === 'en_attente';
+  const canChangeToRefused = !readOnly && demande.statut === 'approuve';
+  const canChangeToApproved = !readOnly && demande.statut === 'refuse';
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>{t('requestDetails')}</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+
+        <div className="modal-body">
+          <div className="modal-section">
+            <h3>{t('generalInfo')}</h3>
+            <div className="info-grid">
+              <div className="info-item">
+                <strong>{t('title')}:</strong> {demande.titre}
+              </div>
+              <div className="info-item">
+                <strong>{t('type')}:</strong> {getTypeDemandeLabel(demande.type_demande)}
+              </div>
+              {demande.type_conge && (
+                <div className="info-item">
+                  <strong>{t('leaveType')}:</strong>{' '}
+                  {demande.type_conge === 'autre'
+                    ? demande.type_conge_autre || t('other')
+                    : demande.type_conge}
+                </div>
+              )}
+              <div className="info-item">
+                <strong>{t('status')}:</strong> {getStatutBadge(demande.statut)}
+              </div>
+              <div className="info-item">
+                <strong>{t('createdOn')}:</strong> {formatDateTime(demande.created_at)}
+              </div>
+            </div>
+          </div>
+
+          <div className="modal-section">
+            <h3>{t('employeeInfo')}</h3>
+            <div className="employee-details">
+              <div className="employee-avatar-large">
+                {demande.employe_photo ? (
+                  <img src={demande.employe_photo} alt={formatFullName(demande.employe_prenom, demande.employe_nom)} />
+                ) : (
+                  <div className="avatar-default-large">
+                    {demande.employe_prenom?.[0] || ''}{demande.employe_nom?.[0] || ''}
+                  </div>
+                )}
+              </div>
+              <div className="employee-info">
+                <h4>{formatFullName(demande.employe_prenom, demande.employe_nom)}</h4>
+                <p><strong>{t('position')}:</strong> {demande.employe_poste || t('na')}</p>
+                <p><strong>{t('employeeID')}:</strong> {demande.employe_matricule || t('na')}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="modal-section">
+            <h3>{t('approvalProcess')}</h3>
+            <div className="approval-process">
+              <div className="approval-step">
+                <div className="step-header">
+                  <span className="step-title">{t('supervisor1')}</span>
+                  <span className={`step-status ${getResponsableStatusClass(getResponsableStatus(demande, 1))}`}>
+                    {getResponsableStatusLabel(getResponsableStatus(demande, 1))}
+                  </span>
+                </div>
+                <div className="step-details">
+                  <p><strong>{t('email')}:</strong> {demande.mail_responsable1 || t('na')}</p>
+                </div>
+              </div>
+              <div className="approval-step">
+                <div className="step-header">
+                  <span className="step-title">{t('supervisor2')}</span>
+                  {demande.mail_responsable2 && (
+                    <span className={`step-status ${getResponsableStatusClass(getResponsableStatus(demande, 2))}`}>
+                      {getResponsableStatusLabel(getResponsableStatus(demande, 2))}
+                    </span>
+                  )}
+                </div>
+                <div className="step-details">
+                  <p><strong>{t('email')}:</strong> {demande.mail_responsable2 || t('notRequired')}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="modal-section">
+            <h3>{t('requestDetails')}</h3>
+            <div className="details-grid">
+              {demande.date_depart && (
+                <div className="detail-row">
+                  <span className="detail-label">{t('startDateReq')}:</span>
+                  <span className="detail-value">{formatDate(demande.date_depart)}</span>
+                </div>
+              )}
+              {demande.date_retour && (
+                <div className="detail-row">
+                  <span className="detail-label">{t('returnDate')}:</span>
+                  <span className="detail-value">{formatDate(demande.date_retour)}</span>
+                </div>
+              )}
+              {demande.heure_depart && (
+                <div className="detail-row">
+                  <span className="detail-label">{t('departureTime')}:</span>
+                  <span className="detail-value">{demande.heure_depart}</span>
+                </div>
+              )}
+              {demande.heure_retour && (
+                <div className="detail-row">
+                  <span className="detail-label">{t('returnTime')}:</span>
+                  <span className="detail-value">{demande.heure_retour}</span>
+                </div>
+              )}
+              {demande.demi_journee && (
+                <div className="detail-row">
+                  <span className="detail-label">{t('halfDay')}:</span>
+                  <span className="detail-value">{t('yes')}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {demande.commentaire_refus && (
+            <div className="modal-section">
+              <h3>{t('refusalComment')}</h3>
+              <div className="commentaire-box">
+                <p>{demande.commentaire_refus}</p>
+              </div>
+            </div>
+          )}
+
+          {canAct && rejectMode && (
+            <div className="modal-section">
+              <h3>{t('refusalComment')}</h3>
+              <textarea
+                value={rejectComment}
+                onChange={(e) => setRejectComment(e.target.value)}
+                placeholder={t('rejectReasonPlaceholder')}
+                rows={3}
+                style={{ width: '100%' }}
+                disabled={actionLoading}
+              />
+            </div>
+          )}
+
+          {canChangeToRefused && changeStatusMode === 'to_refused' && (
+            <div className="modal-section">
+              <h3>{t('statusChangeReason')}</h3>
+              <textarea
+                value={changeStatusComment}
+                onChange={(e) => setChangeStatusComment(e.target.value)}
+                placeholder={t('rejectReasonPlaceholder')}
+                rows={3}
+                style={{ width: '100%' }}
+                disabled={actionLoading}
+              />
+            </div>
+          )}
+        </div>
+
+        <div
+          className="modal-footer"
+          style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}
+        >
+          {canAct && !rejectMode && (
+            <>
+              <button
+                className="btn-action btn-approve"
+                onClick={() => onApprove(demande)}
+                disabled={actionLoading}
+              >
+                <LuCheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {actionLoading ? t('processing') : t('approve')}
+              </button>
+              <button
+                className="btn-action btn-refuse"
+                onClick={() => setRejectMode(true)}
+                disabled={actionLoading}
+              >
+                <LuXCircle size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('reject')}
+              </button>
+            </>
+          )}
+
+          {canAct && rejectMode && (
+            <>
+              <button
+                className="btn-action btn-refuse"
+                onClick={() => onReject(demande)}
+                disabled={actionLoading}
+              >
+                <LuXCircle size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {actionLoading ? t('processing') : t('confirmRefusal')}
+              </button>
+              <button
+                className="btn-close-modal"
+                onClick={() => { setRejectMode(false); setRejectComment(''); }}
+                disabled={actionLoading}
+              >
+                {t('cancel') || 'Annuler'}
+              </button>
+            </>
+          )}
+
+          {canChangeToRefused && changeStatusMode !== 'to_refused' && (
+            <button
+              className="btn-action btn-refuse"
+              onClick={() => setChangeStatusMode('to_refused')}
+              disabled={actionLoading}
+            >
+              <LuRefreshCw size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('changeToRefused')}
+            </button>
+          )}
+
+          {canChangeToRefused && changeStatusMode === 'to_refused' && (
+            <>
+              <button
+                className="btn-action btn-refuse"
+                onClick={() => onChangeToRefused(demande)}
+                disabled={actionLoading}
+              >
+                <LuXCircle size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {actionLoading ? t('processing') : t('confirmRefusal')}
+              </button>
+              <button
+                className="btn-close-modal"
+                onClick={() => { setChangeStatusMode(null); setChangeStatusComment(''); }}
+                disabled={actionLoading}
+              >
+                {t('cancel') || 'Annuler'}
+              </button>
+            </>
+          )}
+
+          {canChangeToApproved && (
+            <button
+              className="btn-action btn-approve"
+              onClick={() => onChangeToApproved(demande)}
+              disabled={actionLoading}
+            >
+              <LuRefreshCw size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {actionLoading ? t('processing') : t('changeToApproved')}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DemandesRH = () => {
+  const { t } = useLanguage();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isReadOnlyHrGroup = shouldHideHrGroupModules(getCurrentUser());
+  // Only group HR managers (multi-site access) get the plant filter. For single-site
+  // Tunisia users, site_dep holds department names, not plants, so the filter stays hidden.
+  const isGroupHrUser = isGlobalHrManager(getCurrentUser());
+  const { siteFilter, setSiteFilter } = useSiteFilter();
+
+  // Sentinel value for the "Tunisia" plant option. Tunisia demandes use department
+  // names (not a Site- value), so they can't be selected by exact match like real
+  // plants. Selecting this option instead matches every demande whose site_dep is a
+  // department (i.e. NOT a Site- plant), which is exactly the Tunisian set.
+  const TUNISIA_SITE_VALUE = '__TUNISIA__';
+
+  const [demandes, setDemandes] = useState([]);
+  const [allDemandes, setAllDemandes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const defaultFilters = {
+    statut: '',
+    employe_id: '',
+    date_debut: '',
+    date_fin: '',
+    nom_employe: ''
+  };
+
+  const [filters, setFilters] = useState(defaultFilters);
+  const pagination = usePagination(demandes, 30, filters);
+  const [employes, setEmployes] = useState([]);
+  const [loadingEmployes, setLoadingEmployes] = useState(false);
+  // Complete list of real plants across ALL accessible schemas (group HR only).
+  // Sourced from /api/employees (which aggregates every country), so every plant
+  // shows in the filter even when it currently has zero demandes.
+  const [plantOptions, setPlantOptions] = useState([]);
+  const [filtersApplied, setFiltersApplied] = useState(false);
+  const [lastResponse, setLastResponse] = useState(null);
+  const [selectedDemande, setSelectedDemande] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+
+  const [actionLoading, setActionLoading] = useState(false);
+  const [rejectMode, setRejectMode] = useState(false);
+  const [rejectComment, setRejectComment] = useState('');
+
+  const [changeStatusMode, setChangeStatusMode] = useState(null);
+  const [changeStatusComment, setChangeStatusComment] = useState('');
+
+  const [inlineReject, setInlineReject] = useState({ id: null, comment: '' });
+  const [inlineChangeRefuse, setInlineChangeRefuse] = useState({ id: null, comment: '' });
+
+  const pendingOpenIdRef = useRef(null);
+  const isFirstMount = useRef(true);
+
+  const API_BASE_URL = getBackendBaseUrl();
+
+  const statuts = ['en_attente', 'approuve', 'refuse', 'annulee'];
+
+  const getActiveFiltersCount = () => {
+    let count = 0;
+    if (filters.statut) count++;
+    if (filters.employe_id) count++;
+    if (filters.date_debut) count++;
+    if (filters.date_fin) count++;
+    if (filters.nom_employe) count++;
+    if (siteFilter) count++;
+    return count;
+  };
+  const activeFiltersCount = getActiveFiltersCount();
+
+  // Plant options are shown only to group HR users. They come from the full
+  // cross-schema plant list (plantOptions, loaded from /api/employees) rather than
+  // from the demandes data — so every real plant appears even when it has zero
+  // demandes. getEmployeeSite keeps Tunisia's department names out of the plant list.
+  const siteOptions = isGroupHrUser ? plantOptions : [];
+
+  const getStatutLabel = (statut) => {
+    const labels = { en_attente: t('pending'), approuve: t('approved'), refuse: t('refused'), annulee: t('cancelledRequest') };
+    return labels[statut] || statut;
+  };
+
+  const getTypeDemandeLabel = (type) => {
+    const labels = {
+      'congé': t('leave'),
+      autorisation_absence: t('absenceAuthorization'),
+      mission: t('mission')
+    };
+    return labels[type] || type;
+  };
+
+  const getResponsableStatus = (demande, num) => {
+    const key = num === 1 ? 'approuve_responsable1' : 'approuve_responsable2';
+    if (demande[key] === true) return 'approved';
+    if (demande[key] === false) return 'refused';
+    return 'pending';
+  };
+
+  const getResponsableStatusLabel = (status) => {
+    const labels = { approved: t('approved'), refused: t('refused'), pending: t('pending') };
+    return labels[status] || status;
+  };
+
+  const getResponsableStatusClass = (status) => {
+    const classes = { approved: 'status-approved', refused: 'status-refused', pending: 'status-pending' };
+    return classes[status] || '';
+  };
+
+  const getStatutBadge = (statut) => {
+    const cfg = {
+      en_attente: { label: t('pending'), class: 'statut-en-attente' },
+      approuve: { label: t('approved'), class: 'statut-approuve' },
+      refuse: { label: t('refused'), class: 'statut-refuse' },
+      annulee: { label: t('cancelledRequest'), class: 'statut-annulee' }
+    };
+    const c = cfg[statut] || { label: statut, class: 'statut-default' };
+    return <span className={`statut-badge ${c.class}`}>{c.label}</span>;
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return t('na');
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return dateString;
+    return date.toLocaleDateString('fr-FR');
+  };
+
+  const formatDateTime = (dateString) => {
+    if (!dateString) return t('na');
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return dateString;
+    return date.toLocaleDateString('fr-FR') + ' ' + date.toLocaleTimeString('fr-FR');
+  };
+
+  const getTypeIcon = (type) => {
+    const icon = (Cmp) => <Cmp size={18} strokeWidth={1.75} aria-hidden="true" className="lu-icon" />;
+    const icons = { 'congé': icon(LuPalmtree), autorisation_absence: icon(LuClock), mission: icon(LuPlane) };
+    return icons[type] || icon(LuFileText);
+  };
+
+  const calculateWorkingDays = (dateDepart, dateRetour, demiJournee, typeDemande) => {
+    if (!dateDepart || !dateRetour) return '';
+    try {
+      const start = new Date(`${dateDepart}T00:00:00`);
+      const end = new Date(`${dateRetour}T00:00:00`);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return '';
+
+      if (typeDemande === 'congé' && end.getTime() === start.getTime()) {
+        const day = start.getDay();
+        const base = (day !== 0 && day !== 6) ? 1 : 0;
+        if (demiJournee && base > 0) return `${base - 0.5} ${t('workingDays')}`;
+        return `${base} ${base > 1 ? t('workingDays') : t('workingDay')}`;
+      }
+
+      if (end < start) return `0 ${t('workingDay')}`;
+
+      let count = 0;
+      const current = new Date(start);
+      while (current < end) {
+        const day = current.getDay();
+        if (day !== 0 && day !== 6) count++;
+        current.setDate(current.getDate() + 1);
+      }
+
+      if (demiJournee && count > 0) return `${count - 0.5} ${t('workingDays')}`;
+      return `${count} ${count > 1 ? t('workingDays') : t('workingDay')}`;
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const getEmployeNameById = (id) => {
+    const emp = employes.find(e => e.id === parseInt(id));
+    return emp ? formatFullName(emp.prenom, emp.nom) : '';
+  };
+
+  const fetchDemandeById = useCallback(async (id) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return null;
+      const response = await fetch(`${API_BASE_URL}/api/demandes/${id}`, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        cache: 'no-cache'
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data?.demande || (data?.id ? data : null);
+    } catch (e) {
+      return null;
+    }
+  }, [API_BASE_URL]);
+
+  const fetchEmployes = useCallback(async () => {
+    try {
+      setLoadingEmployes(true);
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      const response = await fetch(`${API_BASE_URL}/api/employee`, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+      if (!response.ok) throw new Error(t('requestLoadEmployeesError'));
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        setEmployes(data.sort((a, b) =>
+          `${a.prenom} ${a.nom}`.toLowerCase().localeCompare(`${b.prenom} ${b.nom}`.toLowerCase())
+        ));
+      } else {
+        setEmployes([]);
+      }
+    } catch (e) {
+      setEmployes([]);
+    } finally {
+      setLoadingEmployes(false);
+    }
+  }, [API_BASE_URL]);
+
+  // Build the complete plant list for group HR users from /api/employees, which
+  // aggregates employees across every accessible country schema. getEmployeeSite
+  // already excludes Tunisia department names, so every plant shows even if it has
+  // no demandes yet.
+  const fetchPlants = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      const response = await fetch(`${API_BASE_URL}/api/employees`, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        cache: 'no-cache'
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!Array.isArray(data)) return;
+      const plants = Array.from(
+        new Set(
+          data
+            .map(emp => getEmployeeSite(emp))
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b));
+      setPlantOptions(plants);
+    } catch (e) {
+      // Non-fatal: if this fails, the plant filter simply won't populate.
+    }
+  }, [API_BASE_URL]);
+
+  const fetchDemandes = useCallback(async (force = false) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError(t('missingAuthToken'));
+        setDemandes([]);
+        setLoading(false);
+        return;
+      }
+      const queryParams = new URLSearchParams();
+      if (filters.statut) queryParams.append('statut', filters.statut);
+      if (filters.employe_id) queryParams.append('employe_id', filters.employe_id);
+      if (filters.date_debut) queryParams.append('date_debut', filters.date_debut);
+      if (filters.date_fin) queryParams.append('date_fin', filters.date_fin);
+      if (force) queryParams.append('_t', Date.now());
+
+      const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+      const hasServerFilters = Boolean(filters.statut || filters.employe_id || filters.date_debut || filters.date_fin);
+
+      // The unfiltered list (used for the counters) is the same response when no
+      // server-side filter is set -- reuse it instead of a second full fetch;
+      // otherwise fetch both in parallel rather than one after the other.
+      const [response, countResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/demandes?${queryParams}`, { headers, cache: 'no-cache' }),
+        hasServerFilters
+          ? fetch(`${API_BASE_URL}/api/demandes`, { headers, cache: 'no-cache' })
+          : Promise.resolve(null)
+      ]);
+      if (!response.ok) throw new Error(t('serverError'));
+      const data = await response.json();
+      setLastResponse(data);
+      const allFetched = data.success && Array.isArray(data.demandes) ? data.demandes : [];
+      let fetched = allFetched;
+      if (filters.nom_employe.trim()) {
+        const search = filters.nom_employe.toLowerCase().trim();
+        fetched = fetched.filter(d =>
+          `${d.employe_prenom} ${d.employe_nom}`.toLowerCase().includes(search)
+        );
+      }
+      if (siteFilter) {
+        if (siteFilter === TUNISIA_SITE_VALUE) {
+          // Tunisia = any demande sourced from the Tunisia (public) schema, rather
+          // than guessing from the site_dep text -- plant names like "Tianjin" have
+          // no fixed prefix, so they can't be told apart from departments by pattern.
+          fetched = fetched.filter(d => d._source_schema === 'public');
+        } else {
+          fetched = fetched.filter(d => d.employe_site_dep === siteFilter);
+        }
+      }
+      setDemandes(fetched);
+
+      if (!countResponse) {
+        setAllDemandes(allFetched);
+      } else if (countResponse.ok) {
+        const countData = await countResponse.json();
+        setAllDemandes(countData.success && Array.isArray(countData.demandes) ? countData.demandes : []);
+      }
+    } catch (err) {
+      setError(`${t('connectionError')}: ${err.message}`);
+      setDemandes([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [filters, siteFilter, API_BASE_URL, t]);
+
+  const approveSelected = async (demandeToAct = selectedDemande) => {
+    if (!demandeToAct) return;
+    setActionLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(
+        `${API_BASE_URL}/api/demandes/${demandeToAct.id}/approuver-app`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ schema: demandeToAct._source_schema })
+        }
+      );
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || t('requestApproveError'));
+      }
+      await fetchDemandes(true);
+      handleCloseModal();
+    } catch (e) {
+      alert(e.message || t('connectionError'));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const rejectSelected = async (demandeToAct = selectedDemande) => {
+    if (!demandeToAct) return;
+    if (!rejectComment.trim()) {
+      alert(t('rejectionReasonRequired'));
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(
+        `${API_BASE_URL}/api/demandes/${demandeToAct.id}/refuser-app`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ commentaire: rejectComment, schema: demandeToAct._source_schema })
+        }
+      );
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || t('requestRejectError'));
+      }
+      await fetchDemandes(true);
+      handleCloseModal();
+    } catch (e) {
+      alert(e.message || t('connectionError'));
+    } finally {
+      setActionLoading(false);
+      setRejectMode(false);
+      setRejectComment('');
+    }
+  };
+
+  const changeToRefused = async (demandeToAct = selectedDemande) => {
+    if (!demandeToAct) return;
+    if (!changeStatusComment.trim()) {
+      alert(t('rejectionReasonRequired'));
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(
+        `${API_BASE_URL}/api/demandes/${demandeToAct.id}/changer-statut-refuse`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ commentaire: changeStatusComment })
+        }
+      );
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || t('requestStatusChangeError'));
+      }
+      await fetchDemandes(true);
+      handleCloseModal();
+    } catch (e) {
+      alert(e.message || t('connectionError'));
+    } finally {
+      setActionLoading(false);
+      setChangeStatusMode(null);
+      setChangeStatusComment('');
+    }
+  };
+
+  const changeToApproved = async (demandeToAct = selectedDemande) => {
+    if (!demandeToAct) return;
+    setActionLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(
+        `${API_BASE_URL}/api/demandes/${demandeToAct.id}/changer-statut-approuve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+        }
+      );
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || t('requestStatusChangeError'));
+      }
+      await fetchDemandes(true);
+      handleCloseModal();
+    } catch (e) {
+      alert(e.message || t('connectionError'));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const rejectInline = async (demande, comment) => {
+    setActionLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(
+        `${API_BASE_URL}/api/demandes/${demande.id}/refuser-app`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ commentaire: comment, schema: demande._source_schema })
+        }
+      );
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || t('requestRejectError'));
+      }
+      await fetchDemandes(true);
+    } catch (e) {
+      alert(e.message || t('error'));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const changeToRefusedInline = async (demande, comment) => {
+    setActionLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(
+        `${API_BASE_URL}/api/demandes/${demande.id}/changer-statut-refuse`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ commentaire: comment })
+        }
+      );
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || t('requestStatusChangeError'));
+      }
+      await fetchDemandes(true);
+    } catch (e) {
+      alert(e.message || t('error'));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const openId = location.state?.openDemandeId;
+    if (openId) {
+      pendingOpenIdRef.current = String(openId);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+    const filterStatut = location.state?.filterStatut;
+    if (filterStatut) {
+      setFilters(prev => ({ ...prev, statut: filterStatut }));
+      setFiltersApplied(true);
+    }
+    fetchDemandes(true);
+    fetchEmployes();
+    if (isGroupHrUser) {
+      fetchPlants();
+    }
+  }, []); // eslint-disable-line
+
+  useEffect(() => {
+    if (!pendingOpenIdRef.current) return;
+    if (loading) return;
+    const id = pendingOpenIdRef.current;
+    const found = demandes.find(d => String(d.id) === id);
+    if (found) {
+      setSelectedDemande(found);
+      setShowModal(true);
+      pendingOpenIdRef.current = null;
+    } else {
+      fetchDemandeById(id).then(demand => {
+        if (demand) {
+          setSelectedDemande(demand);
+          setShowModal(true);
+        }
+        pendingOpenIdRef.current = null;
+      });
+    }
+  }, [loading, demandes]); // eslint-disable-line
+
+  useEffect(() => {
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+    const hasActiveFilters = activeFiltersCount > 0;
+    setFiltersApplied(hasActiveFilters);
+    const timer = setTimeout(() => fetchDemandes(true), 300);
+    return () => clearTimeout(timer);
+  }, [filters, siteFilter]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!showModal) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, [showModal]);
+
+  const handleFilterChange = (key, value) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const clearFilters = () => {
+    setFilters(defaultFilters);
+    setSiteFilter('');
+    setFiltersApplied(false);
+    setTimeout(() => fetchDemandes(true), 100);
+  };
+
+  const retryFetch = () => fetchDemandes(true);
+
+  const handleViewDetails = (demande) => {
+    setRejectMode(false);
+    setRejectComment('');
+    setChangeStatusMode(null);
+    setChangeStatusComment('');
+    setSelectedDemande(demande);
+    setShowModal(true);
+  };
+
+  const handleOpenRejectModal = (demande) => {
+    setRejectComment('');
+    setRejectMode(true);
+    setChangeStatusMode(null);
+    setChangeStatusComment('');
+    setSelectedDemande(demande);
+    setShowModal(true);
+  };
+
+  const handleOpenChangeToRefusedModal = (demande) => {
+    setChangeStatusComment('');
+    setChangeStatusMode('to_refused');
+    setRejectMode(false);
+    setRejectComment('');
+    setSelectedDemande(demande);
+    setShowModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setSelectedDemande(null);
+    setRejectMode(false);
+    setRejectComment('');
+    setChangeStatusMode(null);
+    setChangeStatusComment('');
+  };
+  const handleExportExcel = () => {
+  if (!demandes || demandes.length === 0) {
+    alert(t('noRequestsToExport'));
+    return;
+  }
+
+  const headers = [
+    'Matricule',
+    'Employé',
+    'Type de demande',
+    'Type de congé',
+    'Statut',
+    'Date de début',
+    'Date de retour',
+    'Heure de départ',
+    'Heure de retour',
+    'Nombre de jours ouvrables',
+    'Demi-journée',
+  ];
+
+  const rows = demandes.map(d => [
+    d.employe_matricule || 'N/A',
+    formatFullName(d.employe_prenom, d.employe_nom),
+    getTypeDemandeLabel(d.type_demande),
+    d.type_conge === 'autre' ? d.type_conge_autre || 'Autre' : d.type_conge || 'N/A',
+    getStatutLabel(d.statut),
+    formatDate(d.date_depart),
+    formatDate(d.date_retour),
+    d.heure_depart || 'N/A',
+    d.heure_retour || 'N/A',
+    calculateWorkingDays(d.date_depart, d.date_retour, d.demi_journee, d.type_demande),
+    d.demi_journee ? 'Oui' : 'Non',
+  ]);
+
+  const csv = [headers, ...rows]
+    .map(row => row.map(cell => `"${String(cell || '').replace(/"/g, '""')}"`).join(';'))
+    .join('\n');
+
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `demandes_RH_${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+  
+
+  return (
+    <div className="demandes-rh">
+      <Sidebar />
+
+      <div className="demandes-header">
+        <h1>{t('hrRequests')}</h1>
+        <p>{t('requestTracking')}</p>
+      </div>
+
+      {error && (
+        <div className="error-banner">
+          <div className="error-content">
+            <span className="error-icon"><LuAlertTriangle size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /></span>
+            <div className="error-details">
+              <h4>{t('error')}</h4>
+              <p>{error}</p>
+            </div>
+            <button className="btn-retry" onClick={retryFetch}>
+              <LuRefreshCw size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('retry')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="filters-section">
+        <div className="filters-header">
+          <h3>{t('searchFilters')}</h3>
+          <div className="filters-actions">
+            <button className="btn-export" onClick={handleExportExcel} disabled={demandes.length === 0}>
+              <LuUpload size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('exportExcel')}
+            </button>
+            <button className="btn-refresh" onClick={retryFetch}>
+              <LuRefreshCw size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('refresh')}
+            </button>
+            {filtersApplied && (
+              <button className="btn-clear" onClick={clearFilters}>
+                <LuEraser size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('clearFilters')}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="demandes-filters-grid">
+          <div className="demandes-filter-group">
+            <label>{t('status')}</label>
+            <select value={filters.statut} onChange={(e) => handleFilterChange('statut', e.target.value)}>
+              <option value="">{t('allStatus')}</option>
+              {statuts.map(s => (
+                <option key={s} value={s}>{getStatutLabel(s)}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="demandes-filter-group">
+            <label>{t('employee')}</label>
+            <select
+              value={filters.employe_id}
+              onChange={(e) => handleFilterChange('employe_id', e.target.value)}
+              disabled={loadingEmployes}
+            >
+              <option value="">{t('allEmployees')}</option>
+              {employes.map(emp => (
+                <option key={emp.id} value={emp.id}>
+                  {formatFullName(emp.prenom, emp.nom)}
+                  {emp.poste ? ` - ${translateStsJobTitle(emp.poste, emp)}` : ''}
+                  {emp.matricule ? ` (${emp.matricule})` : ''}
+                </option>
+              ))}
+            </select>
+            {loadingEmployes && (
+              <div className="loading-indicator">
+                <span className="loading-spinner-small"></span>
+                <span>{t('loading')}...</span>
+              </div>
+            )}
+          </div>
+          <div className="demandes-filter-group">
+            <label>{t('employeeName')}</label>
+            <input
+              type="text"
+              placeholder={t('searchByNamePlaceholder')}
+              value={filters.nom_employe}
+              onChange={(e) => handleFilterChange('nom_employe', e.target.value)}
+            />
+          </div>
+
+          {isGroupHrUser && (
+            <div className="demandes-filter-group">
+              <label>{t('plantSite')}</label>
+              <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)}>
+                <option value="">{t('allSites')}</option>
+                <option value={TUNISIA_SITE_VALUE}>{t('siteTunisia')}</option>
+                {siteOptions.map(site => (
+                  <option key={site} value={site}>{site}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="demandes-filter-group">
+            <label>{t('fromDate')}</label>
+            <input
+              type="date"
+              value={filters.date_debut}
+              onChange={(e) => handleFilterChange('date_debut', e.target.value)}
+            />
+          </div>
+
+          <div className="demandes-filter-group">
+            <label>{t('toDate')}</label>
+            <input
+              type="date"
+              value={filters.date_fin}
+              onChange={(e) => handleFilterChange('date_fin', e.target.value)}
+            />
+          </div>
+        </div>
+
+        {activeFiltersCount > 0 && (
+          <div className="active-filters">
+            <div className="filter-tag-container">
+              <span className="filter-tag-label">
+                {t('activeFilters')} ({activeFiltersCount}):
+              </span>
+              <div className="filter-tags">
+                {filters.statut && (
+                  <span className="tag">{t('status')}: {getStatutLabel(filters.statut)}</span>
+                )}
+                {filters.employe_id && (
+                  <span className="tag">{t('employee')}: {getEmployeNameById(filters.employe_id) || filters.employe_id}</span>
+                )}
+                {filters.nom_employe && (
+                  <span className="tag">
+                    {t('employee')}: {filters.nom_employe}
+                  </span>
+                )}
+                {siteFilter && (
+                  <span className="tag">{t('plantSite')}: {siteFilter === TUNISIA_SITE_VALUE ? 'Tunisie' : siteFilter}</span>
+                )}
+                {filters.date_debut && (
+                  <span className="tag">{t('fromDate')}: {formatDate(filters.date_debut)}</span>
+                )}
+                {filters.date_fin && (
+                  <span className="tag">{t('toDate')}: {formatDate(filters.date_fin)}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="stats-section">
+        <div className="stat-card total" style={{ cursor: 'pointer' }} onClick={() => { handleFilterChange('statut', ''); setFiltersApplied(false); }}>
+          <div className="stat-icon"><i className="fi fi-rr-rectangle-list"></i></div>
+          <div className="stat-content">
+            <div className="stat-number">{allDemandes.length}</div>
+            <div className="stat-label">{t('totalRequests')}</div>
+          </div>
+        </div>
+        <div className="stat-card pending" style={{ cursor: 'pointer' }} onClick={() => handleFilterChange('statut', 'en_attente')}>
+          <div className="stat-icon"><span className="fi fi-rr-hourglass-end"></span></div>
+          <div className="stat-content">
+            <div className="stat-number">{allDemandes.filter(d => d.statut === 'en_attente').length}</div>
+            <div className="stat-label">{t('pending')}</div>
+          </div>
+        </div>
+        <div className="stat-card approved" style={{ cursor: 'pointer' }} onClick={() => handleFilterChange('statut', 'approuve')}>
+          <div className="stat-icon"><span className="fi fi-rs-badge-check"></span></div>
+          <div className="stat-content">
+            <div className="stat-number">{allDemandes.filter(d => d.statut === 'approuve').length}</div>
+            <div className="stat-label">{t('approved')}</div>
+          </div>
+        </div>
+        <div className="stat-card refused" style={{ cursor: 'pointer' }} onClick={() => handleFilterChange('statut', 'refuse')}>
+          <div className="stat-icon"><LuTag size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /></div>
+          <div className="stat-content">
+            <div className="stat-number">{allDemandes.filter(d => d.statut === 'refuse').length}</div>
+            <div className="stat-label">{t('refused')}</div>
+          </div>
+        </div>
+        <div className="stat-card cancelled" style={{ cursor: 'pointer' }} onClick={() => handleFilterChange('statut', 'annulee')}>
+          <div className="stat-icon"><LuUndo2 size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /></div>
+          <div className="stat-content">
+            <div className="stat-number">{allDemandes.filter(d => d.statut === 'annulee').length}</div>
+            <div className="stat-label">{t('cancelledRequests')}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="demandes-content">
+        {loading ? (
+          <div className="loading-state">
+            <div className="spinner"></div>
+            <p>{t('loadingRequests')}</p>
+            {filtersApplied && <p className="loading-sub">{t('applyingFilters')}</p>}
+          </div>
+        ) : error ? (
+          <div className="error-state">
+            <div className="error-icon"><LuAlertTriangle size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /></div>
+            <h3>{t('loadingError')}</h3>
+            <p>{error}</p>
+            <button className="btn-retry" onClick={retryFetch}>{t('retry')}</button>
+          </div>
+        ) : demandes.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon"><LuInbox size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /></div>
+            <h3>{t('noRequests')}</h3>
+            <p>{filtersApplied ? t('noMatchingCriteria') : t('noRequestsAvailable')}</p>
+            {filtersApplied && (
+              <button className="btn-clear-all" onClick={clearFilters}>
+                {t('showAllRequests')}
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="results-header">
+              <h3>{t('results')} ({demandes.length})</h3>
+              <div className="results-info">
+                {lastResponse?.pagination && (
+                  <span className="pagination-info">
+                    {t('page')} {lastResponse.pagination.page} {t('of')} {lastResponse.pagination.pages}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="demandes-grid">
+              {pagination.pageItems.map((demande, index) => (
+                <div key={demande.id} className="demande-card" style={{ animationDelay: `${Math.min(index, 10) * 0.05}s` }}>
+                  <div className="card-header">
+                    <div className="demande-type">
+                      <span className="type-icon">{getTypeIcon(demande.type_demande)}</span>
+                      <span className="type-label">{getTypeDemandeLabel(demande.type_demande)}</span>
+                    </div>
+                    <div className="demande-status">{getStatutBadge(demande.statut)}</div>
+                  </div>
+
+                  <div className="card-body">
+                    <h3 className="demande-title">{demande.titre}</h3>
+
+                    <div className="employe-info">
+                      <div className="avatar">
+                        {demande.employe_photo ? (
+                          <img
+                            src={demande.employe_photo}
+                            alt={formatFullName(demande.employe_prenom, demande.employe_nom)}
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                              e.target.parentElement.innerHTML =
+                                `<div class="avatar-default">${demande.employe_prenom?.[0] || ''}${demande.employe_nom?.[0] || ''}</div>`;
+                            }}
+                          />
+                        ) : (
+                          <div className="avatar-default">
+                            {demande.employe_prenom?.[0] || ''}{demande.employe_nom?.[0] || ''}
+                          </div>
+                        )}
+                      </div>
+                      <div className="employe-details">
+                        <h4>{formatFullName(demande.employe_prenom, demande.employe_nom)}</h4>
+                        <p>{demande.employe_poste} • {t('employeeID')}: {demande.employe_matricule || t('na')}</p>
+                      </div>
+                    </div>
+
+                    {demande.type_conge && (
+                      <div className="detail type-conge">
+                        <span className="label">{t('leaveType')}:</span>
+                        <span className="value">
+                          {demande.type_conge === 'autre'
+                            ? demande.type_conge_autre || t('other')
+                            : demande.type_conge}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="approval-status">
+                      <strong>{t('approvalProcess')}:</strong>
+                    </div>
+
+                    <div className="responsables-section">
+                      <div className="responsable-card">
+                        <div className="responsable-header">
+                          <div className={`responsable-status ${getResponsableStatusClass(getResponsableStatus(demande, 1))}`}>
+                            {getResponsableStatusLabel(getResponsableStatus(demande, 1))}
+                          </div>
+                        </div>
+                        <div className="responsable-email">
+                          {demande.mail_responsable1 || t('emailNotAvailable')}
+                        </div>
+                      </div>
+
+                      <div className="responsable-card">
+                        <div className="responsable-header">
+                          {demande.mail_responsable2 && (
+                            <div className={`responsable-status ${getResponsableStatusClass(getResponsableStatus(demande, 2))}`}>
+                              {getResponsableStatusLabel(getResponsableStatus(demande, 2))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="responsable-email">
+                          {demande.mail_responsable2 || t('notRequired')}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="demande-details">
+                      {demande.date_depart && (
+                        <div className="detail">
+                          <span className="label">{t('startDateReq')}:</span>
+                          <span className="value">{formatDate(demande.date_depart)}</span>
+                        </div>
+                      )}
+                      {demande.date_retour && (
+                        <div className="detail">
+                          <span className="label">{t('returnDate')}:</span>
+                          <span className="value">{formatDate(demande.date_retour)}</span>
+                        </div>
+                      )}
+                      {demande.heure_depart && (
+                        <div className="detail">
+                          <span className="label">{t('departureTime')}:</span>
+                          <span className="value">{demande.heure_depart}</span>
+                        </div>
+                      )}
+                      {demande.heure_retour && (
+                        <div className="detail">
+                          <span className="label">{t('returnTime')}:</span>
+                          <span className="value">{demande.heure_retour}</span>
+                        </div>
+                      )}
+                      {demande.demi_journee && (
+                        <div className="detail">
+                          <span className="label">{t('halfDay')}:</span>
+                          <span className="value">{t('yes')}</span>
+                        </div>
+                      )}
+                      <div className="detail">
+                        <span className="label">{t('createdOn')}:</span>
+                        <span className="value">{formatDate(demande.created_at)}</span>
+                      </div>
+                      <div className="detail">
+                        <span className="label">{t('lastUpdated')}:</span>
+                        <span className="value">{formatDate(demande.updated_at)}</span>
+                      </div>
+                    </div>
+
+                    {demande.commentaire_refus && (
+                      <div className="commentaire">
+                        <div className="comment-label">{t('refusalComment')}:</div>
+                        <p>{demande.commentaire_refus}</p>
+                      </div>
+                    )}
+
+                    <div className="card-actions">
+                      <button
+                        className="btn-action btn-view"
+                        onClick={() => handleViewDetails(demande)}
+                      >
+                        <LuEye size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('viewDetails')}
+                      </button>
+
+                      {!isReadOnlyHrGroup && demande.statut === 'en_attente' && (
+                        <>
+                          <button
+                            className="btn-action btn-approve"
+                            disabled={actionLoading}
+                            onClick={() => approveSelected(demande)}
+                          >
+                            <LuCheckCircle2 size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('approve')}
+                          </button>
+
+                          <button
+                            className="btn-action btn-refuse"
+                            disabled={actionLoading}
+                            onClick={() =>
+                              setInlineReject(prev =>
+                                prev.id === demande.id
+                                  ? { id: null, comment: '' }
+                                  : { id: demande.id, comment: '' }
+                              )
+                            }
+                          >
+                            <LuXCircle size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('reject')}
+                          </button>
+
+                          {inlineReject.id === demande.id && (
+                            <div style={{ width: '100%', marginTop: 6, background: '#fff3f3', border: '1px solid #fca5a5', borderRadius: 8, padding: 12 }}>
+                              <div style={{ fontSize: 12, color: '#991b1b', marginBottom: 6, fontWeight: 600 }}>
+                                {t('rejectionReason')}
+                              </div>
+                              <textarea
+                                rows={2}
+                                placeholder={t('rejectReasonPlaceholder')}
+                                value={inlineReject.comment}
+                                onChange={e => setInlineReject(prev => ({ ...prev, comment: e.target.value }))}
+                                style={{ width: '100%', borderRadius: 6, padding: '6px 8px', border: '1px solid #fca5a5', fontSize: 13, resize: 'none' }}
+                                disabled={actionLoading}
+                              />
+                              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                <button
+                                  className="btn-action btn-refuse"
+                                  disabled={actionLoading}
+                                  onClick={async () => {
+                                    if (!inlineReject.comment.trim()) { alert(t('rejectionReasonRequired')); return; }
+                                    await rejectInline(demande, inlineReject.comment);
+                                    setInlineReject({ id: null, comment: '' });
+                                  }}
+                                >
+                                  <LuXCircle size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {actionLoading ? t('processing') : t('confirmRefusal')}
+                                </button>
+                                <button
+                                  className="btn-action btn-view"
+                                  onClick={() => setInlineReject({ id: null, comment: '' })}
+                                  disabled={actionLoading}
+                                >
+                                  {t('cancel')}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {!isReadOnlyHrGroup && demande.statut === 'approuve' && (
+                        <>
+                          <button
+                            className="btn-action btn-refuse"
+                            disabled={actionLoading}
+                            onClick={() =>
+                              setInlineChangeRefuse(prev =>
+                                prev.id === demande.id
+                                  ? { id: null, comment: '' }
+                                  : { id: demande.id, comment: '' }
+                              )
+                            }
+                          >
+                            <LuRefreshCw size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {t('changeToRefused')}
+                          </button>
+
+                          {inlineChangeRefuse.id === demande.id && (
+                            <div style={{ width: '100%', marginTop: 6, background: '#fff3f3', border: '1px solid #fca5a5', borderRadius: 8, padding: 12 }}>
+                              <div style={{ fontSize: 12, color: '#991b1b', marginBottom: 6, fontWeight: 600 }}>
+                                {t('statusChangeReason')}
+                              </div>
+                              <textarea
+                                rows={2}
+                                placeholder={t('rejectReasonPlaceholder')}
+                                value={inlineChangeRefuse.comment}
+                                onChange={e => setInlineChangeRefuse(prev => ({ ...prev, comment: e.target.value }))}
+                                style={{ width: '100%', borderRadius: 6, padding: '6px 8px', border: '1px solid #fca5a5', fontSize: 13, resize: 'none' }}
+                                disabled={actionLoading}
+                              />
+                              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                <button
+                                  className="btn-action btn-refuse"
+                                  disabled={actionLoading}
+                                  onClick={async () => {
+                                    if (!inlineChangeRefuse.comment.trim()) { alert(t('rejectionReasonRequired')); return; }
+                                    await changeToRefusedInline(demande, inlineChangeRefuse.comment);
+                                    setInlineChangeRefuse({ id: null, comment: '' });
+                                  }}
+                                >
+                                  <LuXCircle size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {actionLoading ? t('processing') : t('confirm')}
+                                </button>
+                                <button
+                                  className="btn-action btn-view"
+                                  onClick={() => setInlineChangeRefuse({ id: null, comment: '' })}
+                                  disabled={actionLoading}
+                                >
+                                  {t('cancel')}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {!isReadOnlyHrGroup && demande.statut === 'refuse' && (
+                        <button
+                          className="btn-action btn-approve"
+                          disabled={actionLoading}
+                          onClick={() => changeToApproved(demande)}
+                        >
+                          <LuRefreshCw size={16} strokeWidth={1.75} aria-hidden="true" className="lu-icon" /> {actionLoading ? t('processing') : t('changeToApproved')}
+                        </button>
+                      )}
+                    </div>
+
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Pagination {...pagination} />
+          </>
+        )}
+      </div>
+
+      {showModal && (
+        <Modal
+          demande={selectedDemande}
+          onClose={handleCloseModal}
+          rejectMode={rejectMode}
+          setRejectMode={setRejectMode}
+          rejectComment={rejectComment}
+          setRejectComment={setRejectComment}
+          actionLoading={actionLoading}
+          onApprove={approveSelected}
+          onReject={rejectSelected}
+          onChangeToRefused={changeToRefused}
+          onChangeToApproved={changeToApproved}
+          changeStatusMode={changeStatusMode}
+          setChangeStatusMode={setChangeStatusMode}
+          changeStatusComment={changeStatusComment}
+          setChangeStatusComment={setChangeStatusComment}
+          t={t}
+          getTypeDemandeLabel={getTypeDemandeLabel}
+          getStatutBadge={getStatutBadge}
+          getResponsableStatus={getResponsableStatus}
+          getResponsableStatusLabel={getResponsableStatusLabel}
+          getResponsableStatusClass={getResponsableStatusClass}
+          formatDate={formatDate}
+          formatDateTime={formatDateTime}
+          readOnly={isReadOnlyHrGroup}
+        />
+      )}
+    </div>
+  );
+};
+
+export default DemandesRH;

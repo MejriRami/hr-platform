@@ -1,0 +1,630 @@
+.paie-content {
+  padding: 32px 40px 60px;
+  background: #f4f5f7;
+  min-height: 100vh;
+  font-family: 'Segoe UI', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #16181f;
+}
+
+.paie-header h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+
+.paie-subtitle {
+  color: #6b6f80;
+  margin: 0 0 20px;
+}
+
+.paie-tabs {
+  display: flex;
+  gap: 4px;
+  background: #e9eaf0;
+  padding: 4px;
+  border-radius: 10px;
+  width: fit-content;
+  margin-bottom: 20px;
+}
+
+.paie-tab {
+  background: transparent;
+  color: #4a4d59;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.paie-tab.active {
+  background: #ffffff;
+  color: #076eaf;
+  box-shadow: 0 1px 2px rgba(16, 20, 40, 0.08);
+}
+
+.paie-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.paie-card {
+  background: #ffffff;
+  border: 1px solid #e6e7ee;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.paie-dropzone {
+  border: 2px dashed #d4d6e3;
+  border-radius: 12px;
+  padding: 40px;
+  text-align: center;
+  color: #6b6f80;
+}
+
+.paie-dropzone input[type='file'] {
+  display: block;
+  margin: 12px auto 0;
+}
+
+.paie-period-line {
+  margin: 16px 0 0;
+}
+
+.paie-field-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.paie-field-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b6f80;
+}
+
+.paie-field-row input,
+.paie-field-row select {
+  padding: 6px 10px;
+  border: 1px solid #d4d6e3;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.paie-warnings {
+  background: #f6f8fb;
+  border: 1px solid #dde3ea;
+  border-left: 4px solid #ee7d11;
+  border-radius: 10px;
+  padding: 14px 18px;
+  color: #274b63;
+}
+
+.paie-warnings h3 {
+  margin-top: 0;
+  color: #0e4c7a;
+}
+
+.paie-badge {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+.paie-badge.warn {
+  background: #fbecc4;
+  color: #7a5a05;
+}
+
+.paie-badge.danger {
+  background: #f6d3d3;
+  color: #8a1f1f;
+}
+
+.paie-badge.ok {
+  background: #e8f6ec;
+  color: #146b3a;
+}
+
+.paie-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.paie-table th,
+.paie-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e6e7ee;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.paie-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b6f80;
+  border-bottom: 2px solid #d4d6e3;
+}
+
+.paie-table td.num,
+.paie-table th.num {
+  text-align: right;
+}
+
+.paie-table input {
+  padding: 4px 8px;
+  border: 1px solid #d4d6e3;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.paie-table input.num {
+  text-align: right;
+  width: 90px;
+}
+
+.paie-table tr.flagged {
+  background: #fef8ea;
+}
+
+.paie-grand-total {
+  text-align: right;
+  font-size: 16px;
+  font-weight: 700;
+  color: #4338ca;
+  padding-top: 12px;
+}
+
+.paie-muted {
+  color: #6b6f80;
+}
+
+.paie-small {
+  font-size: 12px;
+}
+
+.paie-bulletin-sheet {
+  position: relative;
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  margin: 16px auto 0;
+  padding: 9mm 30mm 8mm 17mm;
+  background: white;
+  color: #111;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 8pt;
+  line-height: 1.1;
+  border: 1px solid #d8d8d8;
+  overflow: hidden;
+}
+
+.bulletin-identity-strip {
+  display: grid;
+  grid-template-columns: 9mm 1fr;
+  grid-template-rows: repeat(3, 2.2mm);
+  column-gap: 2mm;
+  width: 112mm;
+  height: 7mm;
+  margin: -5mm 0 1.5mm -5mm;
+  font-size: 6.5pt;
+  line-height: 2.2mm;
+  white-space: nowrap;
+}
+
+.bulletin-identity-strip > :first-child {
+  grid-row: 1 / span 3;
+}
+
+.bulletin-identity-strip > :not(:first-child) {
+  grid-column: 2;
+}
+
+.bulletin-letterhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  min-height: 26mm;
+  margin-bottom: 1.5mm;
+}
+
+.bulletin-letterhead h2 {
+  margin: 0 0 1.5mm;
+  font-size: 18pt;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.bulletin-letterhead p {
+  margin: 1.2mm 0;
+  font-size: 9pt;
+}
+
+.bulletin-company strong {
+  font-weight: 400;
+}
+
+.bulletin-title {
+  text-align: right;
+  width: 58mm;
+}
+
+.bulletin-title h3 {
+  margin: 0 0 3mm;
+  font-size: 13pt;
+  white-space: nowrap;
+}
+
+.bulletin-box-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 0.35mm solid #111;
+  margin: 0 0 1.2mm;
+  table-layout: fixed;
+}
+
+.bulletin-box-table th,
+.bulletin-box-table td {
+  height: 4.6mm;
+  padding: 0.6mm 1mm;
+  font-size: 6.5pt;
+  text-align: center;
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.bulletin-box-table thead th {
+  border-bottom: 0.35mm solid #111;
+}
+
+.bulletin-box-table th {
+  background: transparent;
+  font-weight: 700;
+}
+
+.bulletin-title .bulletin-box-table {
+  width: 52mm;
+  margin-left: auto;
+}
+
+.bulletin-lines-table {
+  width: 100%;
+  height: 124mm;
+  margin: 16.5mm 0 0;
+  border-collapse: collapse;
+  border: 0.35mm solid #111;
+  table-layout: fixed;
+  font-variant-numeric: tabular-nums;
+}
+
+.bulletin-lines-table th {
+  height: 5.5mm;
+  background: transparent;
+  font-size: 6.5pt;
+  text-align: center;
+  font-weight: 700;
+}
+
+.bulletin-lines-table td,
+.bulletin-lines-table th {
+  padding: 0.5mm 1.1mm;
+  line-height: 3.2mm;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.bulletin-lines-table thead th {
+  border-bottom: 0.35mm solid #111;
+}
+
+.bulletin-lines-table tbody tr:not(.bulletin-lines-filler) td {
+  height: 3.2mm;
+}
+
+.bulletin-lines-table .num {
+  text-align: right;
+}
+
+.bulletin-col-label { width: 42%; }
+.bulletin-col-number { width: 11%; }
+.bulletin-col-base { width: 13%; }
+.bulletin-col-rate { width: 10%; }
+.bulletin-col-gain { width: 12%; }
+.bulletin-col-deduction { width: 12%; }
+
+.bulletin-total-row td {
+  font-weight: 700;
+  border-top: 0.35mm solid #111 !important;
+  border-bottom: 0.35mm solid #111 !important;
+}
+
+.bulletin-net-a-payer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-sizing: border-box;
+  width: 66mm;
+  height: 9mm;
+  border: 0.45mm solid #111;
+  padding: 1.5mm 5mm;
+  margin: 0 0 5mm auto;
+  font-weight: 700;
+  font-size: 8pt;
+}
+
+.bulletin-cumuls {
+  margin: 0;
+  width: 112mm;
+}
+
+.bulletin-cumuls th,
+.bulletin-cumuls td {
+  height: 4mm;
+}
+
+.bulletin-legal-note {
+  position: absolute;
+  right: 30mm;
+  bottom: 6mm;
+  left: 17mm;
+  margin: 0;
+  text-align: center;
+  font-size: 7.5pt;
+  white-space: nowrap;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  background: #076eaf;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+button.secondary {
+  background: transparent;
+  color: #076eaf;
+  border: 1px solid #076eaf;
+}
+
+button:disabled {
+  background: #c6c8d6;
+  cursor: not-allowed;
+}
+
+@media print {
+  html,
+  body {
+    width: 210mm !important;
+    min-width: 210mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    zoom: 1 !important;
+  }
+
+  .App,
+  .paie-page,
+  .main-content,
+  .paie-content,
+  .paie-panel {
+    width: 210mm !important;
+    min-width: 210mm !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+    zoom: 1 !important;
+  }
+
+  .sidebar,
+  .sidebar-hamburger-toggle,
+  .chatbot-wrapper,
+  .paie-header,
+  .paie-tabs,
+  .no-print,
+  .paie-panel > *:not(:last-child) {
+    display: none !important;
+  }
+
+  .paie-panel > .paie-card:last-child {
+    display: block !important;
+    width: 210mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .bulletin-print-area {
+    position: static;
+    display: block;
+    width: 210mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .paie-bulletin-sheet {
+    position: relative;
+    width: 210mm;
+    height: 270mm;
+    min-height: 270mm;
+    max-height: 270mm;
+    margin: 0;
+    border: 0;
+    overflow: hidden;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .bulletin-lines-table {
+    /* Was 112mm, purely to leave blank space matching the real form's
+       empty area below the line items -- but combined with the rest of
+       the sheet's content, that pushed the total past one printable page.
+       Chrome's print engine breaks a table across pages when it doesn't
+       fit, even inside an overflow:hidden ancestor (a known print-engine
+       quirk -- the clip doesn't reliably suppress that), which is why it
+       was spilling onto page 2 instead of being clipped. Shrinking this
+       is the actual fix; overflow:hidden on .paie-bulletin-sheet is not
+       enough on its own. */
+    height: 60mm;
+    margin-top: 8mm;
+  }
+  .bulletin-legal-note {
+    bottom: 4mm;
+  }
+  .paie-bulletin-sheet:not(:last-of-type) {
+    break-after: page;
+    page-break-after: always;
+  }
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+}
+
+/* Journal de paie: the STEP 3 layout is very wide -- scroll inside the card,
+   header row and totals row stay in view. */
+.paie-journal-scroll {
+  max-width: 100%;
+  max-height: 55vh;
+  overflow: auto;
+  border: 1px solid #e6e7ee;
+  border-radius: 8px;
+}
+
+.paie-journal-table {
+  width: auto;
+  font-size: 12px;
+}
+
+.paie-journal-table th,
+.paie-journal-table td {
+  padding: 6px 10px !important;
+}
+
+.paie-journal-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: normal;
+  min-width: 80px;
+  max-width: 140px;
+  vertical-align: bottom;
+}
+
+.paie-journal-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  background: #edf4f9;
+  font-weight: 700;
+  border-top: 2px solid #d4d6e3;
+}
+
+.paie-journal-status {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.paie-journal-status.ok {
+  background: #edf4f9;
+  color: #0e4c7a;
+  border-left: 4px solid #0e4c7a;
+}
+
+.paie-journal-status.todo {
+  background: #f6f8fb;
+  color: #274b63;
+  border-left: 4px solid #ee7d11;
+}
+
+/* Step state on the tabs: done (navy), to do (orange), locked (grey). */
+.paie-tab-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
+.paie-tab-badge.done {
+  background: #0e4c7a;
+  color: #fff;
+}
+
+.paie-tab-badge.todo {
+  background: #ee7d11;
+  color: #fff;
+}
+
+.paie-tab-badge.locked {
+  background: #e3e7ee;
+  color: #6b6f80;
+}
+
+.paie-journal-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.paie-journal-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #e6e7ee;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.paie-journal-tile span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b6f80;
+}
+
+.paie-journal-tile strong {
+  font-size: 16px;
+}
+
+/* Solde de tout compte: how the last worked period is paid (cas A / B). */
+.paie-stc-mode {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.paie-stc-mode legend {
+  padding: 0 4px;
+  font-weight: 600;
+  color: #0e4c7a;
+}
+
+.paie-stc-mode label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}

@@ -1,0 +1,11 @@
+import {sha,boundMetadata,MAX_ENVELOPE} from '../service/durable-envelope.mjs';
+/** Private SDK container injected. Uses only opaque event keys; abort signal propagated.
+ * Immutable conflict is SUCCESS only after exact authenticated-envelope hash comparison. */
+export function createDurablePrivateBlob({container,envelope}){
+ async function privateOnly(signal){signal?.throwIfAborted();const p=await container.getProperties({abortSignal:signal});if(p.blobPublicAccess||p.publicAccess)throw Error('public_container');}
+ async function read(meta,signal){await privateOnly(signal);const blob=container.getBlockBlobClient(`v2/${meta.eventId}.bin`),p=await blob.getProperties({abortSignal:signal});if(!Number.isInteger(p.contentLength)||p.contentLength<1||p.contentLength>MAX_ENVELOPE||!p.etag)throw Error('invalid_blob');const body=await blob.downloadToBuffer(0,p.contentLength,{conditions:{ifMatch:p.etag},abortSignal:signal});if(body.length!==p.contentLength||sha(body)!==meta.envelopeHash)throw Error('blob_integrity');return body;}
+ return Object.freeze({
+ async putOrVerify(meta,{signal}={}){boundMetadata(meta);if(!Buffer.isBuffer(meta.envelope)||meta.envelope.length>MAX_ENVELOPE||sha(meta.envelope)!==meta.envelopeHash)throw Error('staging_integrity');await privateOnly(signal);const blob=container.getBlockBlobClient(`v2/${meta.eventId}.bin`);try{await blob.uploadData(meta.envelope,{conditions:{ifNoneMatch:'*'},blobHTTPHeaders:{blobContentType:'application/octet-stream',blobCacheControl:'no-store'},abortSignal:signal});}catch(e){if(e?.statusCode!==409&&e?.statusCode!==412)throw e;const existing=await read(meta,signal);if(!existing.equals(meta.envelope))throw Error('immutable_blob_conflict');}return true;},
+ async downloadVerified(meta,{signal}={}){boundMetadata(meta);const raw=await read(meta,signal);const bytes=await envelope.open(meta,raw,{signal});return {bytes,headers:{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="bulletin.pdf"','Cache-Control':'no-store, private','Pragma':'no-cache','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; sandbox"}};}
+ });
+}
